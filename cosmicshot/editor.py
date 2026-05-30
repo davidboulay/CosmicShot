@@ -79,6 +79,7 @@ class Editor(Gtk.Window):
         self.crop_rect = None     # (x, y, w, h) image coords while crop tool active
         self.text_entry = None
         self.text_pos = None
+        self._entry_css = None
         self.pending_pin = None
 
         # Select-tool state
@@ -305,6 +306,8 @@ class Editor(Gtk.Window):
 
     def _on_font_changed(self, spin):
         self.font_size = spin.get_value()
+        if self.text_entry:               # live-update the box being typed in
+            self._style_text_entry()
         sel = self.selected
         if isinstance(sel, tools.Text):
             self._push_undo()
@@ -397,6 +400,8 @@ class Editor(Gtk.Window):
         self._apply_color_to_selected(self.color)
 
     def _apply_color_to_selected(self, hexc):
+        if self.text_entry:              # live-update the box being typed in
+            self._style_text_entry()
         if self.selected is not None and hasattr(self.selected, "color"):
             self._push_undo()
             self.selected.color = hexc
@@ -656,16 +661,29 @@ class Editor(Gtk.Window):
         self.text_pos = (wx, wy, ix, iy)
         entry = Gtk.Entry()
         entry.set_has_frame(True)
-        sz = int(self.font_size)
-        css = (f"entry {{ font-weight:bold; font-size:{sz}px; color:{self.color};"
-               f" background: rgba(255,255,255,0.85); }}").encode()
-        prov = Gtk.CssProvider(); prov.load_from_data(css)
-        entry.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         entry.connect("activate", lambda *_: self.commit_text())
         self.text_entry = entry
+        self._entry_css = None
+        self._style_text_entry()
         self.overlay.add_overlay(entry)
         self.overlay.show_all()
         GLib.idle_add(entry.grab_focus)
+
+    def _style_text_entry(self):
+        """Apply current font size + colour to the live text edit box (so changes
+        show instantly while typing)."""
+        if not self.text_entry:
+            return
+        ctx = self.text_entry.get_style_context()
+        if getattr(self, "_entry_css", None) is not None:
+            ctx.remove_provider(self._entry_css)
+        sz = int(self.font_size)
+        css = (f"entry {{ font-weight:bold; font-size:{sz}px; color:{self.color};"
+               f" background: rgba(255,255,255,0.9); }}").encode()
+        prov = Gtk.CssProvider(); prov.load_from_data(css)
+        ctx.add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._entry_css = prov
+        self.overlay.queue_resize()  # reflow position/size for the new font size
 
     def _position_text_entry(self, _overlay, child, alloc):
         if child is self.text_entry and self.text_pos:
