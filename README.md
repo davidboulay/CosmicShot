@@ -25,7 +25,10 @@ steps — and **copy, save, or pin** the result.
     a draw-nothing mode for when you only want to rearrange.
   - Arrow, Rectangle, Ellipse, Line
   - Freehand Pen, Highlighter (marker)
-  - Text (inline, click-to-type)
+  - **Text boxes** — type in place; **click a text to re-edit** it. The box auto-grows
+    with what you type and wraps when you drag a handle to set a width (resizing changes
+    the **box width, never the font**). Font size is set only from the Font size control.
+    Left / centre / right / justify alignment. Shift+Enter for a new line, Ctrl+V to paste.
   - **Blur / pixelate** for redacting sensitive info — adjustable strength
   - **Spotlight / focus** — darkens everything outside a resizable box, with an
     adjustable darkness level; great for drawing attention to one area

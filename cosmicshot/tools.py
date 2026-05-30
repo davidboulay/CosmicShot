@@ -14,11 +14,22 @@ Annotations also expose a small geometry protocol used by the editor's Select to
 """
 import math
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import cairo
+import gi
+gi.require_version("Pango", "1.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Pango, PangoCairo
 
 from .config import hex_to_rgba
+
+_PANGO_ALIGN = {
+    "left": Pango.Alignment.LEFT,
+    "center": Pango.Alignment.CENTER,
+    "right": Pango.Alignment.RIGHT,
+    "justify": Pango.Alignment.LEFT,  # justify uses LEFT + set_justify(True)
+}
 
 
 def _set_color(cr, hex_color, alpha=1.0):
@@ -289,34 +300,64 @@ class Highlight(Pen):
 # --------------------------------------------------------------- text/counter
 @dataclass
 class Text(Annotation):
+    """A text box rendered with Pango.
+
+    - Font size is set explicitly (never by resizing the box).
+    - `box_w` is the wrap width: None = auto (grows with content, floored at a
+      minimum); a number = manual width (text wraps, height grows to fit).
+    - `align` is one of left / center / right / justify.
+    """
     x: float; y: float; text: str = ""
     color: str = "#ff3b30"
     size: float = 28
-    _w: float = 0.0
-    _h: float = 0.0
+    align: str = "left"
+    box_w: Optional[float] = None
+    _w: float = 0.0   # last rendered width  (cache for bbox / handles)
+    _h: float = 0.0   # last rendered height (cache for bbox / handles)
+
+    def min_width(self):
+        return max(48.0, self.size * 2.2)
+
+    def build_layout(self, cr):
+        """Configure a Pango layout for the current text/size/align/width and
+        update the cached rendered size. Returns the layout."""
+        layout = PangoCairo.create_layout(cr)
+        fd = Pango.FontDescription()
+        fd.set_family("Sans")
+        fd.set_weight(Pango.Weight.BOLD)
+        fd.set_absolute_size(self.size * Pango.SCALE)
+        layout.set_font_description(fd)
+        layout.set_text(self.text or "", -1)
+        # natural (unwrapped) width first
+        layout.set_width(-1)
+        natural = layout.get_pixel_extents()[1].width
+        eff = self.box_w if self.box_w else max(natural, self.min_width())
+        layout.set_width(int(eff * Pango.SCALE))
+        layout.set_alignment(_PANGO_ALIGN.get(self.align, Pango.Alignment.LEFT))
+        layout.set_justify(self.align == "justify")
+        if self.box_w:
+            layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+        log = layout.get_pixel_extents()[1]
+        self._w = eff
+        self._h = log.height
+        return layout
 
     def draw(self, cr, ctx):
-        if not self.text:
-            return
+        layout = self.build_layout(cr)
         _set_color(cr, self.color)
-        cr.select_font_face("sans-serif", 0, 1)  # bold
-        cr.set_font_size(self.size)
-        lines = self.text.split("\n")
-        self._w = max((cr.text_extents(ln).width for ln in lines), default=0)
-        self._h = self.size * len(lines)
-        for i, line in enumerate(lines):
-            cr.move_to(self.x, self.y + self.size * (i + 1))
-            cr.show_text(line)
+        cr.move_to(self.x, self.y)
+        PangoCairo.show_layout(cr, layout)
 
     def bbox(self):
-        w = self._w or self.size * max(1, len(self.text)) * 0.55
-        h = self._h or self.size * (self.text.count("\n") + 1)
+        w = self._w or (self.box_w or self.min_width())
+        h = self._h or (self.size * 1.4)
         return (self.x, self.y, w, h)
 
     def set_bbox(self, x, y, w, h):
-        lines = self.text.count("\n") + 1
+        # Resizing sets the wrap WIDTH only — never the font size; height is
+        # content-driven.
         self.x, self.y = x, y
-        self.size = max(8, h / lines)
+        self.box_w = max(self.min_width(), w)
 
     def move(self, dx, dy):
         self.x += dx; self.y += dy

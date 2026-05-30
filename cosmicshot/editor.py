@@ -80,6 +80,11 @@ class Editor(Gtk.Window):
         self.editing_text = None   # Text annotation being typed in-place
         self._caret_on = True
         self._caret_src = None
+        self._edit_snapshot = None     # state captured when text editing began
+        self._edit_undo_pushed = False
+        self._maybe_edit = None        # text under a press, to edit on click-no-drag
+        self._press_moved = False
+        self.text_align = "left"
         self.pending_pin = None
 
         # Select-tool state
@@ -206,6 +211,23 @@ class Editor(Gtk.Window):
         self.font_spin.set_tooltip_text("Text font size")
         self.font_spin.connect("value-changed", self._on_font_changed)
         self.font_ctl.pack_start(self.font_spin, False, False, 0)
+        # alignment buttons
+        self.align_buttons = {}
+        agrp = None
+        for key, icon, tip in [
+                ("left", "format-justify-left-symbolic", "Align left"),
+                ("center", "format-justify-center-symbolic", "Centre"),
+                ("right", "format-justify-right-symbolic", "Align right"),
+                ("justify", "format-justify-fill-symbolic", "Justify")]:
+            b = Gtk.RadioButton.new_from_widget(agrp)
+            b.set_mode(False)
+            b.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON))
+            b.set_tooltip_text(tip)
+            b.connect("toggled", self._on_align, key)
+            agrp = agrp or b
+            self.font_ctl.pack_start(b, False, False, 0)
+            self.align_buttons[key] = b
+            self._hand_on_hover(b)
         toolbar.pack_start(self.font_ctl, False, False, 0)
 
         # blur strength (only for the Blur tool)
@@ -294,21 +316,25 @@ class Editor(Gtk.Window):
             self.canvas.queue_draw()
 
     def _update_tool_controls(self):
-        """Show the style control relevant to the active tool (thickness / font /
-        blur / darkness)."""
+        """Show the style control relevant to the active tool / selection
+        (thickness / font+align / blur / darkness)."""
         if getattr(self, "thick_ctl", None) is None:
             return
         t = self.tool
+        text_ctx = (t == "text" or self.editing_text is not None
+                    or isinstance(self.selected, tools.Text))
+        self.font_ctl.set_visible(text_ctx)
         self.blur_ctl.set_visible(t == "blur")
         self.dark_ctl.set_visible(t == "spotlight")
-        self.font_ctl.set_visible(t == "text")
-        self.thick_ctl.set_visible(t not in ("text", "blur", "spotlight"))
+        self.thick_ctl.set_visible(not text_ctx and t not in ("blur", "spotlight"))
 
     def _on_font_changed(self, spin):
         self.font_size = spin.get_value()
         sel = self.selected
         if isinstance(sel, tools.Text):
-            if sel is not self.editing_text:   # no undo spam while typing
+            if sel is self.editing_text:
+                self._ensure_edit_undo()
+            else:
                 self._push_undo()
             sel.size = self.font_size
             self.canvas.queue_draw()
@@ -400,7 +426,9 @@ class Editor(Gtk.Window):
 
     def _apply_color_to_selected(self, hexc):
         if self.selected is not None and hasattr(self.selected, "color"):
-            if self.selected is not self.editing_text:  # no undo spam while typing
+            if self.selected is self.editing_text:
+                self._ensure_edit_undo()
+            else:
                 self._push_undo()
             self.selected.color = hexc
             self.canvas.queue_draw()
@@ -483,11 +511,16 @@ class Editor(Gtk.Window):
             self._drag_last = (ix, iy)
             self._predrag = self._snapshot()
             self._drag_committed = False
+            # a click (no drag) on a text box re-enters editing on release
+            self._maybe_edit = ann if isinstance(ann, tools.Text) else None
+            self._press_moved = False
+            self._update_tool_controls()
             self.canvas.queue_draw()
             return True
 
         # --- Empty canvas: deselect, then the active tool draws/places. ---
         self.selected = None
+        self._update_tool_controls()
         if t == "text":
             self.start_text(ev.x, ev.y, ix, iy)
         elif t == "counter":
@@ -544,11 +577,18 @@ class Editor(Gtk.Window):
             return False
         # finishing a grab (move/resize)?
         if self.active_handle or self._moving:
+            was_move = self._moving
+            cand, moved = self._maybe_edit, self._press_moved
             self.active_handle = None
             self._moving = False
             self._drag_last = None
             self._predrag = None
             self.press_img = None
+            self._maybe_edit = None
+            self._press_moved = False
+            # a click (no drag) on a text box -> edit it
+            if was_move and cand is not None and not moved:
+                self.edit_existing(cand)
             return True
         t = self.tool
         if t == "crop":
@@ -614,9 +654,11 @@ class Editor(Gtk.Window):
         if not (self.active_handle or self._moving) or self.selected is None:
             self._update_hover_cursor(wx, wy)
             return
+        self._press_moved = True
         if not self._drag_committed:
-            # resizing/moving the text being typed shouldn't create undo steps
-            if self.selected is not self.editing_text:
+            if self.selected is self.editing_text:
+                self._ensure_edit_undo()   # part of the in-progress edit
+            else:
                 self.undo_stack.append(self._predrag)
                 self.redo_stack.clear()
                 self.dirty = True
@@ -671,16 +713,41 @@ class Editor(Gtk.Window):
 
     # ------------------------------------------------------------------ text
     def start_text(self, wx, wy, ix, iy):
-        """Begin editing a new Text annotation in place on the canvas. It behaves
-        like any other shape — selectable, movable, resizable via its handles —
-        while you type into it."""
+        """Begin a new Text box in place on the canvas. It behaves like any other
+        shape — selectable, movable, width-resizable via its handles — while you
+        type. Font size changes only via the Font size control."""
         self.commit_text()
-        ann = tools.Text(ix, iy, "", self.color, self.font_size)
+        ann = tools.Text(ix, iy, "", self.color, self.font_size, align=self.text_align)
         self.editing_text = ann
         self.selected = ann
+        self._edit_snapshot = self._snapshot()
+        self._edit_undo_pushed = False
         self._start_caret()
+        self._update_tool_controls()
         self.canvas.grab_focus()
         self.canvas.queue_draw()
+
+    def edit_existing(self, ann):
+        """Re-enter editing on an already-committed Text annotation (on click)."""
+        self.commit_text()
+        self.editing_text = ann   # stays in self.annotations
+        self.selected = ann
+        self.text_align = ann.align
+        self._sync_align_buttons(ann.align)
+        self._edit_snapshot = self._snapshot()
+        self._edit_undo_pushed = False
+        self._start_caret()
+        self._update_tool_controls()
+        self.canvas.grab_focus()
+        self.canvas.queue_draw()
+
+    def _ensure_edit_undo(self):
+        """Push the pre-edit snapshot once, on the first actual change."""
+        if self.editing_text is not None and not self._edit_undo_pushed:
+            self.undo_stack.append(self._edit_snapshot)
+            self.redo_stack.clear()
+            self.dirty = True
+            self._edit_undo_pushed = True
 
     def commit_text(self):
         """Finalise the text being edited: keep it if non-empty, else discard."""
@@ -689,13 +756,40 @@ class Editor(Gtk.Window):
             return
         self.editing_text = None
         self._stop_caret()
+        is_new = ann not in self.annotations
         if ann.text.strip():
-            self._push_undo()
-            self.annotations.append(ann)
+            if is_new:
+                self.annotations.append(ann)  # undo already pushed on first edit
             self.selected = ann
-        elif self.selected is ann:
-            self.selected = None
+        else:
+            if not is_new:
+                self.annotations.remove(ann)
+            if self.selected is ann:
+                self.selected = None
+        self._edit_snapshot = None
+        self._edit_undo_pushed = False
+        self._update_tool_controls()
         self.canvas.queue_draw()
+
+    def _on_align(self, btn, key):
+        if not btn.get_active():
+            return
+        self.text_align = key
+        tgt = self.editing_text
+        if tgt is None and isinstance(self.selected, tools.Text):
+            tgt = self.selected
+        if isinstance(tgt, tools.Text):
+            if tgt is self.editing_text:
+                self._ensure_edit_undo()
+            else:
+                self._push_undo()
+            tgt.align = key
+            self.canvas.queue_draw()
+
+    def _sync_align_buttons(self, key):
+        btn = self.align_buttons.get(key)
+        if btn is not None and not btn.get_active():
+            btn.set_active(True)
 
     def _text_key(self, ev):
         """Handle a key while editing text. Returns True (always consumed)."""
@@ -707,16 +801,20 @@ class Editor(Gtk.Window):
             self.commit_text()
         elif k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if shift:
+                self._ensure_edit_undo()
                 ann.text += "\n"; self.canvas.queue_draw()
             else:
                 self.commit_text()
         elif k == Gdk.KEY_BackSpace:
-            ann.text = ann.text[:-1]; self.canvas.queue_draw()
+            if ann.text:
+                self._ensure_edit_undo()
+                ann.text = ann.text[:-1]; self.canvas.queue_draw()
         elif ctrl and k in (Gdk.KEY_v, Gdk.KEY_V):
             self._paste_into_text()
         else:
             ch = Gdk.keyval_to_unicode(k)
             if ch >= 32:
+                self._ensure_edit_undo()
                 ann.text += chr(ch); self.canvas.queue_draw()
         return True
 
@@ -729,6 +827,7 @@ class Editor(Gtk.Window):
         except Exception:
             text = ""
         if text:
+            self._ensure_edit_undo()
             self.editing_text.text += text
             self.canvas.queue_draw()
 
@@ -808,7 +907,8 @@ class Editor(Gtk.Window):
             cr.save(); self.draft.draw(cr, ctx); cr.restore()
         # text being typed in place (+ caret)
         if self.editing_text is not None:
-            cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
+            if self.editing_text not in self.annotations:  # new text not yet committed
+                cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
             self._draw_caret(cr)
         cr.restore()
         # crop overlay (drawn in widget space)
@@ -825,20 +925,22 @@ class Editor(Gtk.Window):
         return False
 
     def _draw_caret(self, cr):
-        """Draw the blinking text caret (in image space, after the text)."""
+        """Draw the blinking text caret at the end of the text (Pango-aware, so it
+        follows wrapping and alignment)."""
         if not self._caret_on:
             return
+        from gi.repository import Pango
         ann = self.editing_text
-        cr.select_font_face("sans-serif", 0, 1)
-        cr.set_font_size(ann.size)
-        lines = ann.text.split("\n") if ann.text else [""]
-        adv = cr.text_extents(lines[-1]).x_advance if lines[-1] else 0
-        baseline = ann.y + ann.size * len(lines)
-        cx = ann.x + adv
+        layout = ann.build_layout(cr)
+        idx = len((ann.text or "").encode("utf-8"))
+        pos = layout.index_to_pos(idx)
+        cx = ann.x + pos.x / Pango.SCALE
+        cy = ann.y + pos.y / Pango.SCALE
+        ch = (pos.height / Pango.SCALE) or ann.size
         cr.set_source_rgba(*config.hex_to_rgba(ann.color))
-        cr.set_line_width(max(1.5, ann.size * 0.07))
-        cr.move_to(cx, baseline - ann.size * 0.82)
-        cr.line_to(cx, baseline + ann.size * 0.08)
+        cr.set_line_width(max(1.5, ann.size * 0.06))
+        cr.move_to(cx, cy)
+        cr.line_to(cx, cy + ch)
         cr.stroke()
 
     def _draw_hover(self, cr, ann):
