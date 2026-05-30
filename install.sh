@@ -58,6 +58,21 @@ fi
 cp "$SRC/data/cosmicshot.desktop" "$APPS/cosmicshot.desktop"
 update-desktop-database "$APPS" 2>/dev/null || true
 
+# --- autostart the panel tray icon at login ---
+AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+mkdir -p "$AUTOSTART"
+cat > "$AUTOSTART/cosmicshot-tray.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=CosmicShot Tray
+Comment=CosmicShot panel icon with a capture menu
+Exec=$BIN/cosmicshot tray
+Icon=cosmicshot
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+
 echo "Installed:"
 echo "  launcher : $BIN/cosmicshot"
 echo "  package  : $DEST/cosmicshot"
@@ -69,6 +84,7 @@ case ":$PATH:" in
        echo "      export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
 echo
+echo "Tray icon: autostarts at login (remove $AUTOSTART/cosmicshot-tray.desktop to disable)."
 echo "Try it:   cosmicshot region"
 echo "Then bind a key in COSMIC Settings -> Keyboard -> Custom Shortcuts:"
 echo "      cosmicshot region    (recommended: Super+Shift+S or PrtSc)"

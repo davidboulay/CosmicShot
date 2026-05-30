@@ -898,17 +898,24 @@ class Editor(Gtk.Window):
         cr.set_source_surface(self.base_surface, 0, 0)
         cr.get_source().set_filter(cairo.FILTER_GOOD)
         cr.paint()
-        # committed annotations
+        # committed annotations (skip the one being edited; it's drawn specially)
         ctx = _DrawCtx(self.blur_surface, self.base_image.width, self.base_image.height)
         for ann in self.annotations:
+            if ann is self.editing_text:
+                continue
             cr.save(); ann.draw(cr, ctx); cr.restore()
         # live draft
         if self.draft is not None:
             cr.save(); self.draft.draw(cr, ctx); cr.restore()
-        # text being typed in place (+ caret)
+        # text being typed in place: subtle fill behind it, then the text + caret
         if self.editing_text is not None:
-            if self.editing_text not in self.annotations:  # new text not yet committed
-                cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
+            bx, by, bw, bh = self.editing_text.bbox()
+            cr.save()
+            cr.set_source_rgba(1, 1, 1, 0.16)
+            cr.rectangle(bx - 4, by - 2, bw + 8, bh + 4)
+            cr.fill()
+            cr.restore()
+            cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
             self._draw_caret(cr)
         cr.restore()
         # crop overlay (drawn in widget space)
@@ -919,15 +926,18 @@ class Editor(Gtk.Window):
         # hover highlight (any tool, when not the selected shape)
         if self.hover_ann is not None and self.hover_ann is not self.selected:
             self._draw_hover(cr, self.hover_ann)
-        # selection handles (any tool)
-        if self.selected is not None:
-            self._draw_selection(cr)
+        # frame: SOLID + caret = typing; DASHED = moving/resizing or just selected
+        if self.editing_text is not None:
+            manipulating = bool(self.active_handle or self._moving)
+            self._draw_box_frame(cr, self.editing_text, dashed=manipulating)
+        elif self.selected is not None:
+            self._draw_box_frame(cr, self.selected, dashed=True)
         return False
 
     def _draw_caret(self, cr):
         """Draw the blinking text caret at the end of the text (Pango-aware, so it
-        follows wrapping and alignment)."""
-        if not self._caret_on:
+        follows wrapping and alignment). Hidden while dragging (move/resize)."""
+        if not self._caret_on or self.active_handle or self._moving:
             return
         from gi.repository import Pango
         ann = self.editing_text
@@ -953,15 +963,20 @@ class Editor(Gtk.Window):
         cr.rectangle(wx - pad, wy - pad, w * scale + 2 * pad, h * scale + 2 * pad)
         cr.stroke()
 
-    def _draw_selection(self, cr):
-        ann = self.selected
+    def _draw_box_frame(self, cr, ann, dashed):
+        """Frame + handles around a shape. dashed=True for a plain selection
+        (move/resize); solid + thicker for a text box in typing mode."""
         x, y, w, h = ann.bbox()
         wx, wy = self.to_widget(x, y)
         scale, _, _ = self._layout()
         ww, wh = w * scale, h * scale
-        cr.set_source_rgba(*ACCENT, 0.9)
-        cr.set_line_width(1.5)
-        cr.set_dash([4, 3])
+        cr.set_source_rgba(*ACCENT, 0.95)
+        if dashed:
+            cr.set_line_width(1.5)
+            cr.set_dash([4, 3])
+        else:
+            cr.set_line_width(2.5)   # solid, bolder -> "editing / typing"
+            cr.set_dash([])
         cr.rectangle(wx, wy, ww, wh)
         cr.stroke()
         cr.set_dash([])
