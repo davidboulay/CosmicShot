@@ -77,9 +77,9 @@ class Editor(Gtk.Window):
         self.draft = None        # in-progress annotation (live preview)
         self.press_img = None     # press point in image coords
         self.crop_rect = None     # (x, y, w, h) image coords while crop tool active
-        self.text_entry = None
-        self.text_pos = None
-        self._entry_css = None
+        self.editing_text = None   # Text annotation being typed in-place
+        self._caret_on = True
+        self._caret_src = None
         self.pending_pin = None
 
         # Select-tool state
@@ -252,6 +252,7 @@ class Editor(Gtk.Window):
 
         # canvas in an overlay (so we can float a text entry on it)
         self.canvas = Gtk.DrawingArea()
+        self.canvas.set_can_focus(True)  # so it can take key input for text editing
         self.canvas.add_events(
             Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
             | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_MOTION_MASK
@@ -265,7 +266,6 @@ class Editor(Gtk.Window):
 
         self.overlay = Gtk.Overlay()
         self.overlay.add(self.canvas)
-        self.overlay.connect("get-child-position", self._position_text_entry)
         root.pack_start(self.overlay, True, True, 0)
 
         # crop apply/cancel bar (hidden until crop drawn)
@@ -306,11 +306,10 @@ class Editor(Gtk.Window):
 
     def _on_font_changed(self, spin):
         self.font_size = spin.get_value()
-        if self.text_entry:               # live-update the box being typed in
-            self._style_text_entry()
         sel = self.selected
         if isinstance(sel, tools.Text):
-            self._push_undo()
+            if sel is not self.editing_text:   # no undo spam while typing
+                self._push_undo()
             sel.size = self.font_size
             self.canvas.queue_draw()
 
@@ -400,10 +399,9 @@ class Editor(Gtk.Window):
         self._apply_color_to_selected(self.color)
 
     def _apply_color_to_selected(self, hexc):
-        if self.text_entry:              # live-update the box being typed in
-            self._style_text_entry()
         if self.selected is not None and hasattr(self.selected, "color"):
-            self._push_undo()
+            if self.selected is not self.editing_text:  # no undo spam while typing
+                self._push_undo()
             self.selected.color = hexc
             self.canvas.queue_draw()
 
@@ -443,11 +441,22 @@ class Editor(Gtk.Window):
     def on_canvas_press(self, _w, ev):
         if ev.button != 1:
             return False
-        self.commit_text()
         ix, iy = self.to_image(ev.x, ev.y)
         self.press_img = (ix, iy)
         self.hover_ann = None
         t = self.tool
+
+        # While editing text: grab a handle to resize it (keep editing); a press
+        # anywhere else finalises the text, then proceeds normally.
+        if self.editing_text is not None:
+            h = self._hit_handle(self.editing_text, ev.x, ev.y)
+            if h:
+                self.active_handle = h
+                self._moving = False
+                self._predrag = self._snapshot()
+                self._drag_committed = False
+                return True
+            self.commit_text()
 
         # Crop is a whole-image region tool and never grabs shapes.
         if t == "crop":
@@ -544,7 +553,10 @@ class Editor(Gtk.Window):
         t = self.tool
         if t == "crop":
             if self.crop_rect and self.crop_rect[2] > 4 and self.crop_rect[3] > 4:
-                self.crop_bar.show()
+                self.crop_bar.show()      # a real drag -> offer Apply / Cancel
+            else:
+                self.crop_rect = None     # a plain click cancels the crop
+                self.crop_bar.hide()
             self.press_img = None
             self.canvas.queue_draw()
             return True
@@ -603,9 +615,11 @@ class Editor(Gtk.Window):
             self._update_hover_cursor(wx, wy)
             return
         if not self._drag_committed:
-            self.undo_stack.append(self._predrag)
-            self.redo_stack.clear()
-            self.dirty = True
+            # resizing/moving the text being typed shouldn't create undo steps
+            if self.selected is not self.editing_text:
+                self.undo_stack.append(self._predrag)
+                self.redo_stack.clear()
+                self.dirty = True
             self._drag_committed = True
         sel = self.selected
         if self.active_handle:
@@ -657,60 +671,83 @@ class Editor(Gtk.Window):
 
     # ------------------------------------------------------------------ text
     def start_text(self, wx, wy, ix, iy):
+        """Begin editing a new Text annotation in place on the canvas. It behaves
+        like any other shape — selectable, movable, resizable via its handles —
+        while you type into it."""
         self.commit_text()
-        self.text_pos = (wx, wy, ix, iy)
-        entry = Gtk.Entry()
-        entry.set_has_frame(True)
-        entry.connect("activate", lambda *_: self.commit_text())
-        self.text_entry = entry
-        self._entry_css = None
-        self._style_text_entry()
-        self.overlay.add_overlay(entry)
-        self.overlay.show_all()
-        GLib.idle_add(entry.grab_focus)
-
-    def _style_text_entry(self):
-        """Apply current font size + colour to the live text edit box (so changes
-        show instantly while typing)."""
-        if not self.text_entry:
-            return
-        ctx = self.text_entry.get_style_context()
-        if getattr(self, "_entry_css", None) is not None:
-            ctx.remove_provider(self._entry_css)
-        sz = int(self.font_size)
-        css = (f"entry {{ font-weight:bold; font-size:{sz}px; color:{self.color};"
-               f" background: rgba(255,255,255,0.9); }}").encode()
-        prov = Gtk.CssProvider(); prov.load_from_data(css)
-        ctx.add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self._entry_css = prov
-        self.overlay.queue_resize()  # reflow position/size for the new font size
-
-    def _position_text_entry(self, _overlay, child, alloc):
-        if child is self.text_entry and self.text_pos:
-            wx, wy, _ix, _iy = self.text_pos
-            alloc.x = int(wx)
-            alloc.y = int(wy - self.font_size)
-            nat = child.get_preferred_size()[1]
-            alloc.width = max(160, nat.width)
-            alloc.height = nat.height
-            return True
-        return False
+        ann = tools.Text(ix, iy, "", self.color, self.font_size)
+        self.editing_text = ann
+        self.selected = ann
+        self._start_caret()
+        self.canvas.grab_focus()
+        self.canvas.queue_draw()
 
     def commit_text(self):
-        if not self.text_entry:
+        """Finalise the text being edited: keep it if non-empty, else discard."""
+        ann = self.editing_text
+        if ann is None:
             return
-        text = self.text_entry.get_text().strip()
-        entry = self.text_entry
-        self.text_entry = None
-        if text and self.text_pos:
-            _wx, _wy, ix, iy = self.text_pos
+        self.editing_text = None
+        self._stop_caret()
+        if ann.text.strip():
             self._push_undo()
-            ann = tools.Text(ix, iy, text, self.color, self.font_size)
             self.annotations.append(ann)
-            self.selected = ann  # auto-select so it can be moved/resized
-        self.overlay.remove(entry)
-        self.text_pos = None
+            self.selected = ann
+        elif self.selected is ann:
+            self.selected = None
         self.canvas.queue_draw()
+
+    def _text_key(self, ev):
+        """Handle a key while editing text. Returns True (always consumed)."""
+        ann = self.editing_text
+        k = ev.keyval
+        ctrl = ev.state & Gdk.ModifierType.CONTROL_MASK
+        shift = ev.state & Gdk.ModifierType.SHIFT_MASK
+        if k == Gdk.KEY_Escape:
+            self.commit_text()
+        elif k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            if shift:
+                ann.text += "\n"; self.canvas.queue_draw()
+            else:
+                self.commit_text()
+        elif k == Gdk.KEY_BackSpace:
+            ann.text = ann.text[:-1]; self.canvas.queue_draw()
+        elif ctrl and k in (Gdk.KEY_v, Gdk.KEY_V):
+            self._paste_into_text()
+        else:
+            ch = Gdk.keyval_to_unicode(k)
+            if ch >= 32:
+                ann.text += chr(ch); self.canvas.queue_draw()
+        return True
+
+    def _paste_into_text(self):
+        import subprocess
+        try:
+            out = subprocess.run(["wl-paste", "-n", "-t", "text/plain"],
+                                 capture_output=True, timeout=3)
+            text = out.stdout.decode("utf-8", "replace")
+        except Exception:
+            text = ""
+        if text:
+            self.editing_text.text += text
+            self.canvas.queue_draw()
+
+    # caret blink ---------------------------------------------------------
+    def _start_caret(self):
+        self._caret_on = True
+        if self._caret_src is None:
+            self._caret_src = GLib.timeout_add(500, self._blink_caret)
+
+    def _stop_caret(self):
+        if self._caret_src is not None:
+            GLib.source_remove(self._caret_src)
+            self._caret_src = None
+
+    def _blink_caret(self):
+        self._caret_on = not self._caret_on
+        if self.editing_text is not None:
+            self.canvas.queue_draw()
+        return True
 
     # ------------------------------------------------------------------ crop
     def apply_crop(self):
@@ -769,9 +806,14 @@ class Editor(Gtk.Window):
         # live draft
         if self.draft is not None:
             cr.save(); self.draft.draw(cr, ctx); cr.restore()
+        # text being typed in place (+ caret)
+        if self.editing_text is not None:
+            cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
+            self._draw_caret(cr)
         cr.restore()
         # crop overlay (drawn in widget space)
-        if self.tool == "crop" and self.crop_rect:
+        if (self.tool == "crop" and self.crop_rect
+                and self.crop_rect[2] >= 1 and self.crop_rect[3] >= 1):
             self._draw_crop(cr, a)
             return False
         # hover highlight (any tool, when not the selected shape)
@@ -781,6 +823,23 @@ class Editor(Gtk.Window):
         if self.selected is not None:
             self._draw_selection(cr)
         return False
+
+    def _draw_caret(self, cr):
+        """Draw the blinking text caret (in image space, after the text)."""
+        if not self._caret_on:
+            return
+        ann = self.editing_text
+        cr.select_font_face("sans-serif", 0, 1)
+        cr.set_font_size(ann.size)
+        lines = ann.text.split("\n") if ann.text else [""]
+        adv = cr.text_extents(lines[-1]).x_advance if lines[-1] else 0
+        baseline = ann.y + ann.size * len(lines)
+        cx = ann.x + adv
+        cr.set_source_rgba(*config.hex_to_rgba(ann.color))
+        cr.set_line_width(max(1.5, ann.size * 0.07))
+        cr.move_to(cx, baseline - ann.size * 0.82)
+        cr.line_to(cx, baseline + ann.size * 0.08)
+        cr.stroke()
 
     def _draw_hover(self, cr, ann):
         x, y, w, h = ann.bbox()
@@ -830,23 +889,23 @@ class Editor(Gtk.Window):
 
     # ------------------------------------------------------------- shortcuts
     def on_key(self, _w, ev):
+        # Typing into an in-place text box takes priority over all shortcuts.
+        if self.editing_text is not None:
+            return self._text_key(ev)
         ctrl = ev.state & Gdk.ModifierType.CONTROL_MASK
         shift = ev.state & Gdk.ModifierType.SHIFT_MASK
         k = ev.keyval
         if k == Gdk.KEY_Escape:
-            if self.text_entry:
-                self.text_entry.set_text(""); self.commit_text()
-            elif self.crop_rect:
+            if self.crop_rect:
                 self.cancel_crop()
             elif self.selected is not None:
                 self.selected = None; self.canvas.queue_draw()
             else:
                 self._request_close()
             return True
-        if k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and self.crop_rect and not self.text_entry:
+        if k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and self.crop_rect:
             self.apply_crop(); return True
-        if k in (Gdk.KEY_Delete, Gdk.KEY_BackSpace) and not self.text_entry \
-                and self.selected is not None:
+        if k in (Gdk.KEY_Delete, Gdk.KEY_BackSpace) and self.selected is not None:
             self.delete_selected(); return True
         if ctrl and k in (Gdk.KEY_z, Gdk.KEY_Z):
             self.redo() if shift else self.undo(); return True
@@ -863,7 +922,7 @@ class Editor(Gtk.Window):
                   Gdk.KEY_e: "ellipse", Gdk.KEY_l: "line", Gdk.KEY_p: "pen",
                   Gdk.KEY_h: "highlight", Gdk.KEY_t: "text", Gdk.KEY_b: "blur",
                   Gdk.KEY_o: "spotlight", Gdk.KEY_n: "counter", Gdk.KEY_x: "crop"}
-        if not ctrl and k in keymap and not self.text_entry:
+        if not ctrl and k in keymap:
             self.tool_buttons[keymap[k]].set_active(True)
             return True
         return False
