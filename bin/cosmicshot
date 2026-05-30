@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# CosmicShot launcher. Resolves the repo/install root and runs the package.
+set -euo pipefail
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m cosmicshot "$@"
