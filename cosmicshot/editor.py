@@ -181,6 +181,7 @@ class Editor(Gtk.Window):
             group = group or btn
             toolbar.pack_start(btn, False, False, 0)
             self.tool_buttons[key] = btn
+            self._hand_on_hover(btn)
 
         toolbar.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
 
@@ -237,6 +238,7 @@ class Editor(Gtk.Window):
             self._style_swatch(sw, hexc)
             sw.connect("clicked", self.on_color, hexc)
             toolbar.pack_start(sw, False, False, 0)
+            self._hand_on_hover(sw)
 
         # custom color
         self.color_btn = Gtk.ColorButton()
@@ -245,6 +247,7 @@ class Editor(Gtk.Window):
         self.color_btn.set_tooltip_text("Custom colour")
         self.color_btn.connect("color-set", self.on_custom_color)
         toolbar.pack_start(self.color_btn, False, False, 2)
+        self._hand_on_hover(self.color_btn)
 
         # canvas in an overlay (so we can float a text entry on it)
         self.canvas = Gtk.DrawingArea()
@@ -256,6 +259,8 @@ class Editor(Gtk.Window):
         self.canvas.connect("button-press-event", self.on_canvas_press)
         self.canvas.connect("button-release-event", self.on_canvas_release)
         self.canvas.connect("motion-notify-event", self.on_canvas_motion)
+        self.canvas.connect("realize",
+                             lambda *_: self._set_canvas_cursor(self._tool_cursor()))
 
         self.overlay = Gtk.Overlay()
         self.overlay.add(self.canvas)
@@ -348,12 +353,36 @@ class Editor(Gtk.Window):
             self.commit_text()  # finish any pending text
             # selection persists across tools so any tool can manipulate shapes
             self._update_tool_controls()
-            cursor = {"crop": "crosshair", "select": "default"}.get(key, "crosshair")
-            win = self.get_window()
-            if win:
-                win.set_cursor(Gdk.Cursor.new_from_name(self.get_display(), cursor))
+            self._set_canvas_cursor(self._tool_cursor())
             if getattr(self, "canvas", None) is not None:
                 self.canvas.queue_draw()
+
+    def _tool_cursor(self):
+        """The canvas cursor for the active tool when not hovering a shape."""
+        return {"crop": "crosshair", "select": "default"}.get(self.tool, "crosshair")
+
+    def _set_canvas_cursor(self, name):
+        """Set the cursor on the CANVAS only — never the toolbar / window chrome."""
+        canvas = getattr(self, "canvas", None)
+        win = canvas.get_window() if canvas is not None else None
+        if win:
+            try:
+                win.set_cursor(Gdk.Cursor.new_from_name(self.get_display(), name))
+            except TypeError:
+                pass
+
+    def _hand_on_hover(self, widget):
+        """Show a pointing-hand cursor when hovering a clickable toolbar widget."""
+        def apply(w):
+            win = w.get_window()
+            if win:
+                try:
+                    win.set_cursor(Gdk.Cursor.new_from_name(self.get_display(), "pointer"))
+                except TypeError:
+                    pass
+        widget.connect("realize", lambda w: apply(w))
+        if widget.get_realized():
+            apply(widget)
 
     def on_color(self, _b, hexc):
         self.color = hexc
@@ -586,11 +615,9 @@ class Editor(Gtk.Window):
         self.canvas.queue_draw()
 
     def _update_hover_cursor(self, wx, wy):
-        """Hover feedback for ANY tool: resize/move cursor + highlight over shapes."""
-        win = self.get_window()
-        if not win:
-            return
-        base = "crosshair" if self.tool != "select" else "default"
+        """Hover feedback for ANY tool: resize/move cursor + highlight over shapes
+        (applied to the canvas only)."""
+        base = self._tool_cursor()
         name = base
         hover = None
         if self.selected is not None:
@@ -608,10 +635,7 @@ class Editor(Gtk.Window):
         if hover is not self.hover_ann:
             self.hover_ann = hover
             self.canvas.queue_draw()
-        try:
-            win.set_cursor(Gdk.Cursor.new_from_name(self.get_display(), name))
-        except TypeError:
-            pass
+        self._set_canvas_cursor(name)
 
     def delete_selected(self):
         if self.selected is not None and self.selected in self.annotations:
