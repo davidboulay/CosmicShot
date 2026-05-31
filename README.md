@@ -7,7 +7,7 @@ CosmicShot fills that gap: drag-select a region over a dimmed desktop, then land
 straight in an editor to draw arrows, boxes, text, blur sensitive bits, add numbered
 steps — and **copy, save, or pin** the result.
 
-![CosmicShot editor](docs/editor.png)
+![CosmicShot in action](docs/cosmicshot-screenshot.png)
 
 ## Features
 
