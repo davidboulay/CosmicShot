@@ -299,9 +299,11 @@ class Recorder:
 
 
 class _RegionDim:
-    """Dim everything except the recorded region (per monitor, click-through),
-    so the user sees what's being captured. Outside the region crop, so it's
-    never in the video."""
+    """Mark the recorded region with a red frame (per monitor, click-through),
+    so the user sees what's being captured while still working normally with
+    the windows underneath. Outline-only — no darkening — so moving/ą using a
+    window doesn't fight a full-screen dim. The frame is outside the crop, so
+    it's never in the video. (Class name kept for compatibility.)"""
 
     def __init__(self, region, monitors):
         self.windows = []
@@ -310,7 +312,7 @@ class _RegionDim:
         disp = Gdk.Display.get_default()
         for m in monitors:
             try:
-                w = _DimWindow(m, disp.get_monitor(m.index), region)
+                w = _DimWindow(m, disp.get_monitor(m.index), region, outline_only=True)
                 self.windows.append(w); w.show_all()
             except Exception:
                 pass
@@ -445,6 +447,14 @@ class PreviewWindow:
         self._discard()
         return True
 
+    def present(self):
+        """Raise the preview to the front (used when a new capture is attempted
+        while this one is still waiting to be saved)."""
+        try:
+            self.win.present()
+        except Exception:
+            pass
+
     def run(self):
         self.win.show_all()
         self._playbin.set_state(Gst.State.PLAYING)
@@ -479,6 +489,7 @@ class RecordingSession:
         self._dim = None
         self._panel_mode = False
         self._sig_id = None
+        self._present_sig = None
 
     # -- control card ----------------------------------------------------
     def _build_control(self):
@@ -604,15 +615,17 @@ class RecordingSession:
             traceback.print_exc()
             return self._on_error(str(exc))
         self._started = True
-        # Stop lives in the panel (the red ⏹ tray button) for every mode when a
-        # tray is running. Region/app-window ALSO keep the floating card off the
-        # recorded area; full-screen has nowhere off-screen for a card, so it
-        # relies on the panel alone (and only falls back to a card if there's no
-        # tray to host the Stop button).
+        # Always register the recording so it can be stopped by signal — from
+        # the tray's red ⏹ button OR from `cosmicshot record --stop` (a hotkey,
+        # for setups without a tray). If a tray is running, light up its panel
+        # Stop button too. Region/app-window also keep the floating card off the
+        # recorded area; full-screen relies on the panel/hotkey (a card would be
+        # in the shot) and only falls back to a card when there's no tray.
         from . import lock
+        self._register_recording()
         have_tray = bool(lock.tray_pid())
         if have_tray:
-            self._enter_panel_mode()
+            self._signal_tray()
         if self.target != "screen" or not have_tray:
             if self.target == "region" and self.region:
                 self._dim = _RegionDim(self.region, self.monitors)
@@ -620,22 +633,21 @@ class RecordingSession:
         self._timer_id = GLib.timeout_add_seconds(1, self._tick)
         self._update()
 
-    # -- panel-controlled Stop (full screen) -----------------------------
-    def _enter_panel_mode(self):
-        """Put the Stop control in the panel: register this recording so the
-        tray shows a red Stop, and listen for its stop signal."""
+    # -- stop-by-signal (tray button / `record --stop` hotkey) -----------
+    def _register_recording(self):
+        """Publish this recording's PID and listen for the stop signal."""
         import signal
         from . import lock
         self._panel_mode = True
         lock.write_recording_pid()
         self._sig_id = GLib.unix_signal_add(
             GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self._on_stop_signal)
-        self._signal_tray()
-        print("[record] panel mode: Stop is in the tray", file=sys.stderr, flush=True)
+        print("[record] recording registered (signal-stoppable)",
+              file=sys.stderr, flush=True)
 
     def _on_stop_signal(self):
-        self.stop()
-        return False  # one-shot
+        self.stop()  # _close_overlays() -> _exit_panel_mode() removes this source
+        return True
 
     def _signal_tray(self):
         """Nudge the tray to re-read the recording state (icon + menu)."""
@@ -729,6 +741,15 @@ class RecordingSession:
         try:
             prev = PreviewWindow(self._tmp, self._save_temp, self._discard_temp,
                                  suggested_name=suggested, start_dir=start_dir)
+            # While the preview waits to be saved this process still holds the
+            # capture lock, so a new capture attempt should raise this window
+            # rather than do nothing — register for the standard present signal.
+            import signal
+            from . import lock
+            lock.write_active_pid()
+            self._present_sig = GLib.unix_signal_add(
+                GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                lambda: (prev.present(), True)[1])
             prev.run()
         except Exception as exc:
             import traceback
@@ -795,4 +816,8 @@ class RecordingSession:
 
     def _quit(self):
         from gi.repository import Gtk
+        from . import lock
+        if self._present_sig:
+            GLib.source_remove(self._present_sig); self._present_sig = None
+        lock.clear_active_pid()
         GLib.idle_add(Gtk.main_quit)

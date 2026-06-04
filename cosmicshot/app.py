@@ -210,16 +210,43 @@ def main(argv=None):
     p.add_argument("--target", default="region",
                    choices=["region", "screen", "window"],
                    help="what to capture in 'scroll'/'record' mode (default: region)")
+    p.add_argument("--stop", action="store_true",
+                   help="stop the recording in progress (e.g. bind a hotkey to "
+                        "'cosmicshot record --stop' to stop a full-screen recording)")
     p.add_argument("--file", help="image path for 'open' mode")
     args = p.parse_args(argv)
 
     _set_branding()
     cfg = config.load()
 
+    # Stop a recording in progress (works without a tray — bind a hotkey to it).
+    if args.mode == "record" and args.stop:
+        from . import lock
+        import signal
+        pid = lock.recording_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+            except OSError:
+                pass
+        else:
+            export.notify("CosmicShot", "No recording is in progress.")
+        return 0
+
     # 'tray' is the background app and must not take the capture lock.
     if args.mode == "tray":
         from . import tray
         return tray.run_tray(cfg) or 0
+
+    # Launched from the panel menu? The COSMIC panel keeps its tray menu open
+    # after a click, so dismiss it before grabbing or it lands in the shot.
+    if os.environ.get("COSMICSHOT_FROM_TRAY") and args.mode in (
+            "region", "full", "screen", "window", "scroll", "record"):
+        try:
+            from . import overlay
+            overlay.dismiss_popups()
+        except Exception:
+            pass
 
     # One capture/editor session at a time: if an editor is already open,
     # don't let another capture pile up on top of it.
