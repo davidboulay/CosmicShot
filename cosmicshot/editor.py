@@ -1157,11 +1157,32 @@ class Editor(Gtk.Window):
         self._closing = True
         self.destroy()
 
+    def _on_present_signal(self):
+        """Another capture was requested while we're open — surface this editor."""
+        try:
+            self.deiconify()
+            self.present()
+        except Exception:
+            pass
+        return True  # keep the handler installed
+
     def run(self):
         """Show the editor; returns the surface to pin (or None)."""
+        import signal as _signal
+        from gi.repository import GLib
+        from . import lock
+
         self.pending_pin = None
         self.show_all()
         self.crop_bar.hide()
         self._update_tool_controls()  # hide contextual controls show_all revealed
-        Gtk.main()
+        # Let a second capture bring this editor to the front (SIGUSR1).
+        lock.write_active_pid()
+        sig = GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, _signal.SIGUSR1,
+                                   self._on_present_signal)
+        try:
+            Gtk.main()
+        finally:
+            GLib.source_remove(sig)
+            lock.clear_active_pid()
         return self.pending_pin

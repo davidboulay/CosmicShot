@@ -10,6 +10,32 @@ import fcntl
 import os
 
 _RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+_ACTIVE_PID = os.path.join(_RUNTIME, "cosmicshot-capture.pid")
+
+
+def write_active_pid() -> None:
+    """Record the PID of the process whose editor currently holds the screen,
+    so a second capture can signal it to come to the front."""
+    try:
+        with open(_ACTIVE_PID, "w") as fh:
+            fh.write(str(os.getpid()))
+    except OSError:
+        pass
+
+
+def read_active_pid():
+    try:
+        with open(_ACTIVE_PID) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def clear_active_pid() -> None:
+    try:
+        os.unlink(_ACTIVE_PID)
+    except OSError:
+        pass
 
 
 class SingleInstance:

@@ -143,10 +143,18 @@ def main(argv=None):
 
     # One capture/editor session at a time: if an editor is already open,
     # don't let another capture pile up on top of it.
-    from .lock import SingleInstance
-    capture_lock = SingleInstance("capture")
+    from . import lock
+    capture_lock = lock.SingleInstance("capture")
     if not capture_lock.acquire():
         export.notify("CosmicShot", "A capture is already in progress.")
+        # Bring the existing editor to the front instead of starting a new one.
+        pid = lock.read_active_pid()
+        if pid:
+            import signal
+            try:
+                os.kill(pid, signal.SIGUSR1)
+            except (OSError, ProcessLookupError):
+                pass
         return 0
 
     try:
