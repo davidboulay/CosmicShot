@@ -603,12 +603,27 @@ class Editor(Gtk.Window):
         if self.draft is not None:
             if self._draft_is_meaningful():
                 self._push_undo()
-                self.annotations.append(self.draft)
-                self.selected = self.draft  # auto-select the new shape
+                existing = (self._existing_spotlight()
+                            if isinstance(self.draft, tools.Spotlight) else None)
+                if existing is not None:
+                    # Add a hole to the single dark overlay instead of stacking
+                    # a second one (darkness must not compound).
+                    existing.add_hole(self.draft.x, self.draft.y,
+                                      self.draft.w, self.draft.h)
+                    self.selected = existing
+                else:
+                    self.annotations.append(self.draft)
+                    self.selected = self.draft  # auto-select the new shape
             self.draft = None
         self.press_img = None
         self.canvas.queue_draw()
         return True
+
+    def _existing_spotlight(self):
+        for ann in self.annotations:
+            if isinstance(ann, tools.Spotlight):
+                return ann
+        return None
 
     def _draft_is_meaningful(self):
         d = self.draft
@@ -718,6 +733,8 @@ class Editor(Gtk.Window):
         type. Font size changes only via the Font size control."""
         self.commit_text()
         ann = tools.Text(ix, iy, "", self.color, self.font_size, align=self.text_align)
+        # Start with a roomy box so there's space to type before it auto-grows.
+        ann.box_w = max(ann.min_width(), 320.0)
         self.editing_text = ann
         self.selected = ann
         self._edit_snapshot = self._snapshot()
@@ -909,10 +926,10 @@ class Editor(Gtk.Window):
             cr.save(); self.draft.draw(cr, ctx); cr.restore()
         # text being typed in place: subtle fill behind it, then the text + caret
         if self.editing_text is not None:
-            bx, by, bw, bh = self.editing_text.bbox()
+            bx, by, bw, bh = self.editing_text.bbox()  # already padded
             cr.save()
             cr.set_source_rgba(1, 1, 1, 0.16)
-            cr.rectangle(bx - 4, by - 2, bw + 8, bh + 4)
+            cr.rectangle(bx, by, bw, bh)
             cr.fill()
             cr.restore()
             cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
@@ -944,8 +961,8 @@ class Editor(Gtk.Window):
         layout = ann.build_layout(cr)
         idx = len((ann.text or "").encode("utf-8"))
         pos = layout.index_to_pos(idx)
-        cx = ann.x + pos.x / Pango.SCALE
-        cy = ann.y + pos.y / Pango.SCALE
+        cx = ann.x + ann.PAD + pos.x / Pango.SCALE
+        cy = ann.y + ann.PAD + pos.y / Pango.SCALE
         ch = (pos.height / Pango.SCALE) or ann.size
         cr.set_source_rgba(*config.hex_to_rgba(ann.color))
         cr.set_line_width(max(1.5, ann.size * 0.06))

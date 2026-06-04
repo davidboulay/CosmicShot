@@ -3,22 +3,22 @@ Type=Application
 Name=CosmicShot
 GenericName=Screenshot & Annotation
 Comment=Capture, annotate, and share screenshots — CleanShot-style for COSMIC
-Exec=cosmicshot region
+Exec=cosmicshot tray
 Icon=cosmicshot
 Terminal=false
 Categories=Graphics;Utility;
 Keywords=screenshot;capture;annotate;screen;
 StartupNotify=false
 StartupWMClass=cosmicshot
-Actions=Region;Full;Window;
+Actions=Region;Screen;Window;
 
 [Desktop Action Region]
 Name=Capture Region
 Exec=cosmicshot region
 
-[Desktop Action Full]
-Name=Capture Full Desktop
-Exec=cosmicshot full
+[Desktop Action Screen]
+Name=Capture Screen
+Exec=cosmicshot screen
 
 [Desktop Action Window]
 Name=Capture Window (COSMIC picker)

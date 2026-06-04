@@ -9,8 +9,6 @@ gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GtkLayerShell, GLib  # noqa: E402
 import cairo  # noqa: E402
 
-from .capture import desktop_bounds
-
 DIM = (0, 0, 0, 0.45)
 ACCENT = (0.0, 0.48, 1.0)  # selection border
 
@@ -123,8 +121,6 @@ class _MonitorOverlay(Gtk.Window):
             cr.stroke()
             self._draw_handles(cr, wx, wy, ww, wh)
             self._draw_dims(cr, wx, wy, ww, wh, iw, ih)
-            if self.controller.preseeded and not self.controller.dragging:
-                self._draw_hint(cr, a, "↵ Reuse last region  ·  drag for a new one  ·  Esc")
         elif self.pointer:
             # crosshair before first drag
             cr.set_source_rgba(1, 1, 1, 0.6)
@@ -195,7 +191,7 @@ class _MonitorOverlay(Gtk.Window):
 class SelectionOverlay:
     """Runs the overlay across all monitors and returns the chosen rect."""
 
-    def __init__(self, screenshot_path, monitors, last_region=None):
+    def __init__(self, screenshot_path, monitors):
         self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
         self.monitors = monitors
         self.windows = []
@@ -204,20 +200,9 @@ class SelectionOverlay:
         self.cur = None
         self.result = None  # (x, y, w, h) in image-pixel space
         self._cancelled = False
-        self.preseeded = False
-        # Pre-load the previously used region (CleanShot "capture last area").
-        if last_region:
-            x, y, w, h = last_region
-            dx0, dy0, dx1, dy1 = desktop_bounds(monitors)
-            if (w >= 4 and h >= 4 and x >= dx0 and y >= dy0
-                    and x + w <= dx1 and y + h <= dy1):
-                self.start = (x, y)
-                self.cur = (x + w, y + h)
-                self.preseeded = True
 
     def begin(self, _win, ix, iy):
         self.dragging = True
-        self.preseeded = False  # user is drawing a fresh region
         self.start = (ix, iy)
         self.cur = (ix, iy)
 
@@ -265,6 +250,149 @@ class SelectionOverlay:
         for m in self.monitors:
             gm = display.get_monitor(m.index)
             win = _MonitorOverlay(self, m, gm, self.surface)
+            self.windows.append(win)
+            win.show_all()
+        Gtk.main()
+        return self.result
+
+
+class _ScreenPickWindow(Gtk.Window):
+    """One layer-shell window per monitor; lights up its screen on hover."""
+
+    def __init__(self, controller, monitor, gdk_monitor, surface):
+        super().__init__()
+        self.controller = controller
+        self.m = monitor
+        self.surface = surface
+
+        GtkLayerShell.init_for_window(self)
+        GtkLayerShell.set_monitor(self, gdk_monitor)
+        GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+        for edge in (GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT,
+                     GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM):
+            GtkLayerShell.set_anchor(self, edge, True)
+        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        GtkLayerShell.set_exclusive_zone(self, -1)
+
+        self.area = Gtk.DrawingArea()
+        self.area.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK
+            | Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.KEY_PRESS_MASK)
+        self.area.connect("draw", self.on_draw)
+        self.add(self.area)
+        self.connect("button-press-event", self.on_press)
+        self.connect("motion-notify-event", self.on_motion)
+        self.connect("enter-notify-event", self.on_enter)
+        self.connect("key-press-event", self.on_key)
+
+    def on_enter(self, _w, _ev):
+        self.controller.set_hover(self.m.index)
+        return False
+
+    def on_motion(self, _w, _ev):
+        self.controller.set_hover(self.m.index)
+        return True
+
+    def on_press(self, _w, ev):
+        if ev.button == 1:
+            self.controller.choose(self.m)
+        return True
+
+    def on_key(self, _w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            self.controller.cancel()
+        return True
+
+    def _scale(self):
+        a = self.area.get_allocation()
+        sx = a.width / self.m.width if self.m.width else 1
+        sy = a.height / self.m.height if self.m.height else 1
+        return sx or 1, sy or 1
+
+    def on_draw(self, _w, cr):
+        a = self.area.get_allocation()
+        sx, sy = self._scale()
+        cr.save()
+        cr.scale(sx, sy)
+        cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+        cr.get_source().set_filter(cairo.FILTER_FAST)
+        cr.paint()
+        cr.restore()
+
+        hovered = self.controller.hover == self.m.index
+        if not hovered:
+            cr.set_source_rgba(*DIM)
+            cr.rectangle(0, 0, a.width, a.height)
+            cr.fill()
+        else:
+            cr.set_source_rgb(*ACCENT)
+            cr.set_line_width(6)
+            cr.rectangle(3, 3, a.width - 6, a.height - 6)
+            cr.stroke()
+        self._draw_label(cr, a, hovered)
+        return False
+
+    def _draw_label(self, cr, a, hovered):
+        label = f"{self.m.model}   {self.m.width} × {self.m.height}"
+        if hovered:
+            label = "Click to capture  ·  " + label
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL,
+                            cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(16)
+        ext = cr.text_extents(label)
+        pad = 12
+        bw, bh = ext.width + 2 * pad, ext.height + 2 * pad
+        bx = (a.width - bw) / 2
+        by = (a.height - bh) / 2
+        cr.set_source_rgba(0, 0, 0, 0.78)
+        _MonitorOverlay._round_rect(cr, bx, by, bw, bh, 10)
+        cr.fill()
+        cr.set_source_rgb(1, 1, 1)
+        cr.move_to(bx + pad, by + pad + ext.height)
+        cr.show_text(label)
+
+
+class ScreenPicker:
+    """Dim every monitor; the one under the pointer lights up. Click it to pick
+    that whole screen. Returns the chosen Monitor, or None if cancelled."""
+
+    def __init__(self, screenshot_path, monitors):
+        self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
+        self.monitors = monitors
+        self.windows = []
+        self.hover = -1
+        self.result = None
+
+    def set_hover(self, index):
+        if self.hover != index:
+            self.hover = index
+            for win in self.windows:
+                win.area.queue_draw()
+
+    def choose(self, monitor):
+        self.result = monitor
+        self._quit()
+
+    def cancel(self):
+        self.result = None
+        self._quit()
+
+    def _quit(self):
+        for win in self.windows:
+            win.destroy()
+        GLib.idle_add(Gtk.main_quit)
+
+    def run(self):
+        display = Gdk.Display.get_default()
+        # Pre-hover the monitor under the pointer so a single screen is obvious.
+        from .capture import monitor_at_pointer
+        try:
+            self.hover = monitor_at_pointer(self.monitors).index
+        except Exception:
+            self.hover = self.monitors[0].index if self.monitors else -1
+        for m in self.monitors:
+            gm = display.get_monitor(m.index)
+            win = _ScreenPickWindow(self, m, gm, self.surface)
             self.windows.append(win)
             win.show_all()
         Gtk.main()
