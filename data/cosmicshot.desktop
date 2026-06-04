@@ -10,7 +10,7 @@ Categories=Graphics;Utility;
 Keywords=screenshot;capture;annotate;screen;
 StartupNotify=false
 StartupWMClass=cosmicshot
-Actions=Region;Screen;Window;
+Actions=Region;Screen;AppWindow;
 
 [Desktop Action Region]
 Name=Capture Region
@@ -20,6 +20,6 @@ Exec=cosmicshot region
 Name=Capture Screen
 Exec=cosmicshot screen
 
-[Desktop Action Window]
-Name=Capture Window (COSMIC picker)
+[Desktop Action AppWindow]
+Name=Capture App Window
 Exec=cosmicshot window

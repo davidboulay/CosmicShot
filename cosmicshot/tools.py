@@ -212,24 +212,32 @@ class Spotlight(Annotation):
 
     @staticmethod
     def draw_combined(cr, ctx, spots, extra_rect=None):
-        """Paint one dark overlay over the whole image with each spotlight's
-        rectangle (plus an optional live draft rect) punched out."""
+        """Paint one dark overlay over the whole image with the UNION of every
+        spotlight's rectangle (plus an optional live draft rect) punched out.
+
+        Overlapping focus areas merge into one bright region — they don't darken
+        each other. Done by building the dim layer in a group and clearing the
+        union of the focus rects (nonzero winding fills overlaps once)."""
         W = getattr(ctx, "img_w", 0)
         H = getattr(ctx, "img_h", 0)
         if not W or not H or (not spots and not extra_rect):
             return
-        darkness = max([s.darkness for s in spots] + ([0.0] if not spots else []))
+        darkness = max([s.darkness for s in spots] + [0.6 if extra_rect else 0.0])
+        rects = [(s.x, s.y, s.w, s.h) for s in spots]
         if extra_rect:
-            darkness = max(darkness, 0.6)
+            rects.append(tuple(extra_rect))
         cr.save()
-        cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        cr.push_group()
         cr.set_source_rgba(0, 0, 0, max(0.0, min(0.95, darkness)))
         cr.rectangle(0, 0, W, H)
-        for s in spots:
-            cr.rectangle(s.x, s.y, s.w, s.h)
-        if extra_rect:
-            cr.rectangle(*extra_rect)
         cr.fill()
+        cr.set_operator(cairo.OPERATOR_CLEAR)   # carve the union of focus rects
+        for rx, ry, rw, rh in rects:
+            cr.rectangle(rx, ry, rw, rh)
+        cr.fill()                                # nonzero winding -> union
+        cr.set_operator(cairo.OPERATOR_OVER)
+        cr.pop_group_to_source()
+        cr.paint()
         cr.restore()
 
     def draw(self, cr, ctx):

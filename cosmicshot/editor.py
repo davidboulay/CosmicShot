@@ -511,14 +511,17 @@ class Editor(Gtk.Window):
         # 2) the body of any shape under the cursor -> select + (drag to) move
         ann = self._topmost_at(ix, iy)
         if ann is not None:
+            was_selected = self.selected is ann
             self.selected = ann
             self.active_handle = None
             self._moving = True
             self._drag_last = (ix, iy)
             self._predrag = self._snapshot()
             self._drag_committed = False
-            # a click (no drag) on a text box re-enters editing on release
-            self._maybe_edit = ann if isinstance(ann, tools.Text) else None
+            # First click just SELECTS a text box (frame + resize/delete). Only a
+            # click on an already-selected text box (no drag) enters editing.
+            self._maybe_edit = (ann if isinstance(ann, tools.Text) and was_selected
+                                else None)
             self._press_moved = False
             self._update_tool_controls()
             self.canvas.queue_draw()
@@ -698,7 +701,11 @@ class Editor(Gtk.Window):
             ann = self._topmost_at(*self.to_image(wx, wy))
             if ann is not None:
                 hover = ann
-                name = "move"
+                # Over an already-selected text box -> I-beam: a click edits it.
+                if ann is self.selected and isinstance(ann, tools.Text):
+                    name = "text"
+                else:
+                    name = "move"
         if hover is not self.hover_ann:
             self.hover_ann = hover
             self.canvas.queue_draw()

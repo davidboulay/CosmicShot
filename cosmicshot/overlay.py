@@ -451,13 +451,19 @@ class WindowPicker:
         self.result = None
 
     def _window_at(self, gx, gy):
-        best, best_area = None, None
-        for w in self.windows:
-            if w["x"] <= gx <= w["x"] + w["w"] and w["y"] <= gy <= w["y"] + w["h"]:
-                area = w["w"] * w["h"]
-                if best is None or area < best_area:  # smallest = most specific
-                    best, best_area = w, area
-        return best
+        # COSMIC doesn't expose reliable z-order, so among the windows covering
+        # this point we pick the front-most by heuristic: the focused (active)
+        # window if it's here, otherwise the smallest one — a window on top is
+        # usually the focused and/or smaller one. Minimized windows were already
+        # dropped, so they're never offered.
+        covering = [w for w in self.windows
+                    if w["x"] <= gx <= w["x"] + w["w"]
+                    and w["y"] <= gy <= w["y"] + w["h"]]
+        if not covering:
+            return None
+        active = [w for w in covering if w.get("active")]
+        pool = active or covering
+        return min(pool, key=lambda w: w["w"] * w["h"])
 
     def set_point(self, gx, gy):
         win = self._window_at(gx, gy)

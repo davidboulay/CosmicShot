@@ -29,7 +29,7 @@ for _name in ("AyatanaAppIndicator3", "AppIndicator3"):
 MENU = [
     ("Capture Region", "region"),
     ("Capture Screen…", "screen"),
-    ("Capture Window…", "window"),
+    ("Capture App Window…", "window"),
 ]
 
 
