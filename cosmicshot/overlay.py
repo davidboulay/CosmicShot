@@ -498,6 +498,102 @@ class WindowPicker:
         return self.result
 
 
+class ScrollCapture:
+    """Manual-scroll capture. A region has already been chosen; this shows a
+    small control bar, grabs frames of that region on a background thread while
+    the user scrolls it, and returns the captured frames (newest last) to be
+    stitched. Returns [] if cancelled."""
+
+    def __init__(self, region, capture_mod):
+        self.region = region            # (x, y, w, h) in global pixel space
+        self._capture = capture_mod     # cosmicshot.capture (full() grab)
+        self.frames = []                # PIL.Image of the region, in order
+        self._running = False
+        self._cancelled = False
+        self._thread = None
+        self.bar = None
+        self.count_label = None
+
+    def _build_bar(self):
+        from gi.repository import Pango
+        win = Gtk.Window()
+        GtkLayerShell.init_for_window(win)
+        GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.BOTTOM, True)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.BOTTOM, 40)
+        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box.get_style_context().add_class("scroll-bar")
+        win.add(box)
+        lbl = Gtk.Label(label="Scroll the area ↓   ")
+        box.pack_start(lbl, False, False, 0)
+        self.count_label = Gtk.Label(label="0 frames")
+        box.pack_start(self.count_label, False, False, 0)
+        done = Gtk.Button(label="Done (↵)")
+        done.connect("clicked", lambda _b: self._finish())
+        box.pack_start(done, False, False, 0)
+        cancel = Gtk.Button(label="Cancel (Esc)")
+        cancel.connect("clicked", lambda _b: self._cancel())
+        box.pack_start(cancel, False, False, 0)
+        win.connect("key-press-event", self._on_key)
+        self.bar = win
+
+    def _on_key(self, _w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            self._cancel()
+        elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self._finish()
+        return True
+
+    def _worker(self):
+        from PIL import Image
+        from . import scroll as _scroll
+        x, y, w, h = self.region
+        last_kept = None
+        while self._running:
+            try:
+                shot = self._capture.full()
+                full = Image.open(shot).convert("RGB")
+                frame = full.crop((max(0, x), max(0, y),
+                                   min(x + w, full.width), min(y + h, full.height)))
+            except Exception:
+                continue
+            keep = last_kept is None or _scroll.detect_shift(last_kept, frame) >= 4
+            if keep:
+                self.frames.append(frame)
+                last_kept = frame
+                n = len(self.frames)
+                GLib.idle_add(lambda n=n: self.count_label.set_text(f"{n} frames") or False)
+            import time
+            time.sleep(0.2)
+
+    def _finish(self):
+        self._running = False
+        self._teardown()
+
+    def _cancel(self):
+        self._running = False
+        self._cancelled = True
+        self._teardown()
+
+    def _teardown(self):
+        if self.bar is not None:
+            self.bar.destroy()
+        GLib.idle_add(Gtk.main_quit)
+
+    def run(self):
+        import threading
+        self._build_bar()
+        self.bar.show_all()
+        self._running = True
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+        Gtk.main()
+        if self._thread:
+            self._thread.join(timeout=2)
+        return [] if self._cancelled else self.frames
+
+
 class ScreenPicker:
     """Dim every monitor; the one under the pointer lights up. Click it to pick
     that whole screen. Returns the chosen Monitor, or None if cancelled."""

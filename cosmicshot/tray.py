@@ -27,9 +27,11 @@ for _name in ("AyatanaAppIndicator3", "AppIndicator3"):
         continue
 
 MENU = [
-    ("Capture Region", "region"),
-    ("Capture Screen…", "screen"),
-    ("Capture App Window…", "window"),
+    ("Capture Region", ["region"]),
+    ("Capture Screen…", ["screen"]),
+    ("Capture App Window…", ["window"]),
+    ("Scrolling Screenshot (Region)…", ["scroll", "--target", "region"]),
+    ("Scrolling Screenshot (App Window)…", ["scroll", "--target", "window"]),
 ]
 
 
@@ -40,15 +42,15 @@ def _base_cmd():
     return [sys.executable, "-m", "cosmicshot"]
 
 
-def _launch(mode):
-    subprocess.Popen(_base_cmd() + [mode], env=os.environ.copy())
+def _launch(args):
+    subprocess.Popen(_base_cmd() + list(args), env=os.environ.copy())
 
 
 def _build_menu():
     menu = Gtk.Menu()
-    for label, mode in MENU:
+    for label, args in MENU:
         item = Gtk.MenuItem(label=label)
-        item.connect("activate", lambda _w, m=mode: _launch(m))
+        item.connect("activate", lambda _w, a=args: _launch(a))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
