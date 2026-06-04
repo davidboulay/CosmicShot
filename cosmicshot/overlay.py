@@ -807,6 +807,7 @@ class ScrollCapture:
         self._cancelled = False
         self.too_fast = False        # kept for API compat; never blocks now
         self._gap = False            # transient "slow down" hint
+        self._hide_bar_on_grab = False
         self._thread = None
         self.dims = []
         self.ctrl = None
@@ -823,17 +824,28 @@ class ScrollCapture:
         return False
 
     def _grab_region(self):
-        """Grab the desktop and crop to the region. The control bar stays
-        visible (positioned off the region) so it's always responsive."""
+        """Grab the desktop and crop to the region. If the control bar shares a
+        monitor with the region, hide it for the instant of the grab so it isn't
+        captured; otherwise it lives on another monitor and stays visible."""
         from PIL import Image
+        if self._hide_bar_on_grab:
+            import threading as _t
+            import time
+            ev = _t.Event()
+            GLib.idle_add(lambda: (self.ctrl.hide(), ev.set(), False)[2])
+            ev.wait(0.3)
+            time.sleep(0.04)
         try:
             shot = self._capture.full()
             full = Image.open(shot).convert("RGB")
             x, y, w, h = self.region
-            return full.crop((max(0, x), max(0, y),
+            frame = full.crop((max(0, x), max(0, y),
                               min(x + w, full.width), min(y + h, full.height)))
         except Exception:
-            return None
+            frame = None
+        if self._hide_bar_on_grab:
+            GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
+        return frame
 
     def _worker(self):
         import time
@@ -887,16 +899,29 @@ class ScrollCapture:
             d = _DimWindow(m, gm, self.region)
             self.dims.append(d)
             d.show_all()
-        # Put the control bar on the region's monitor, clear of the region:
-        # below it if there's room, otherwise above it.
+        # Keep the control bar OUT of the captured region. Best: a monitor the
+        # region doesn't touch (multi-monitor). Else the region's monitor, clear
+        # of the region if possible; if it fills the screen, hide it per grab.
         rx, ry, rw, rh = self.region
-        cx, cy = rx + rw / 2, ry + rh / 2
-        host = next((m for m in self.monitors
-                     if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
-                    self.monitors[0])
-        room_below = (host.y + host.height) - (ry + rh)
-        anchor_top = room_below < 120
-        self.ctrl = _ControlBar(self, display.get_monitor(host.index), anchor_top)
+
+        def _intersects(m):
+            return not (rx + rw <= m.x or rx >= m.x + m.width
+                        or ry + rh <= m.y or ry >= m.y + m.height)
+
+        free = [m for m in self.monitors if not _intersects(m)]
+        if free:
+            bar_mon, anchor_top = free[0], False
+        else:
+            cx, cy = rx + rw / 2, ry + rh / 2
+            bar_mon = next((m for m in self.monitors
+                            if m.x <= cx < m.x + m.width
+                            and m.y <= cy < m.y + m.height), self.monitors[0])
+            anchor_top = (bar_mon.y + bar_mon.height) - (ry + rh) < 120
+            # Region covers this monitor edge-to-edge -> nowhere clear; hide it
+            # during each grab so it never lands in the shot.
+            if (ry <= bar_mon.y + 8 and ry + rh >= bar_mon.y + bar_mon.height - 8):
+                self._hide_bar_on_grab = True
+        self.ctrl = _ControlBar(self, display.get_monitor(bar_mon.index), anchor_top)
         self.ctrl.show_all()
         self._running = True
         # Last-resort escape: never let the capture trap the user.
