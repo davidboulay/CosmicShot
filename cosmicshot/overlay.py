@@ -823,7 +823,7 @@ class ScrollCapture:
         self._running = False
         self._cancelled = False
         self.too_fast = False        # kept for API compat; never blocks now
-        self._gap = False            # transient "slow down" hint
+        self._warn = None            # None | "up" | "gap" — shown in the status
         self._hide_bar_on_grab = False
         self._thread = None
         self.dims = []
@@ -831,10 +831,14 @@ class ScrollCapture:
 
     def _update_status(self):
         n = len(self.frames)
-        if self._gap:
+        if self._warn == "up":
             self.ctrl.set_status(
-                f"⚠ Scrolled too far — scroll back up a little to continue  "
-                f"({n} frames captured)", too_fast=True)
+                f"⚠ You're scrolling up — scroll DOWN to capture  ({n} frames)",
+                too_fast=True)
+        elif self._warn == "gap":
+            self.ctrl.set_status(
+                f"⚠ Lost the scroll — scroll back up a little to continue  "
+                f"({n} frames)", too_fast=True)
         else:
             self.ctrl.set_status(
                 f"Scrolling…  {n} frames  ·  ↵ Done  ·  Esc cancel")
@@ -883,18 +887,18 @@ class ScrollCapture:
                     u_s, u_e = _scroll.detect_overlap(frame, last_kept)
                     if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
                         self.frames.append(frame); last_kept = frame
-                        self._gap = False
+                        self._warn = None
                         GLib.idle_add(self._update_status)
-                    elif _scroll.is_confident(u_e):
-                        # Scrolled up and still overlapping — fine, just waiting
-                        # for the user to come back down. Clear any gap warning.
-                        self._gap = False
+                    elif _scroll.is_confident(u_e) and u_s >= 4:
+                        # Overlaps, but the content moved DOWN -> scrolling up
+                        # (wrong direction). Warn; resume when they go back down.
+                        self._warn = "up"
                         GLib.idle_add(self._update_status)
                     else:
-                        # No overlap with the last kept frame: the user scrolled
-                        # past it. Capture is stalled until they scroll BACK UP
-                        # into range — warn clearly and recover automatically.
-                        self._gap = True
+                        # No overlap with the last kept frame: scrolled past it.
+                        # Stalled until they scroll BACK UP into range — warn and
+                        # recover automatically.
+                        self._warn = "gap"
                         GLib.idle_add(self._update_status)
             except Exception:
                 traceback.print_exc()          # never let the loop die silently
