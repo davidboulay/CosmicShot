@@ -88,12 +88,29 @@ def mode_full(cfg):
 
 
 def mode_window(cfg):
-    # Use COSMIC's native interactive picker (lets you choose a window/region),
-    # then drop straight into the editor.
-    shot_path = capture.portal_interactive()
-    if not shot_path or not os.path.exists(shot_path):
+    """Pick a specific app window: hover to highlight, click to capture that
+    whole window. Uses COSMIC's toplevel-info protocol for window geometry; if
+    that's unavailable (no build tools / non-COSMIC), fall back to COSMIC's
+    native interactive picker."""
+    from . import windows
+    wins = windows.list_windows()
+    if not wins:
+        shot_path = capture.portal_interactive()  # fallback
+        if not shot_path or not os.path.exists(shot_path):
+            return
+        _run_editor(Image.open(shot_path).convert("RGBA"), cfg)
         return
-    img = Image.open(shot_path).convert("RGBA")
+
+    monitors = capture.list_monitors()
+    shot_path = capture.full()
+    from .overlay import WindowPicker
+    rect = WindowPicker(shot_path, monitors, wins).run()
+    if not rect:
+        return  # cancelled
+    x, y, w, h = rect
+    full = Image.open(shot_path).convert("RGBA")
+    img = full.crop((max(0, x), max(0, y),
+                     min(x + w, full.width), min(y + h, full.height)))
     _run_editor(img, cfg)
 
 
