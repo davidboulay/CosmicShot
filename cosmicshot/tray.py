@@ -42,6 +42,13 @@ def _base_cmd():
     return [sys.executable, "-m", "cosmicshot"]
 
 
+# Delay (ms) between dismissing the menu and grabbing the screen. The grab
+# (cosmic-screenshot) captures the compositor's current frame, so the menu must
+# be fully unmapped first; an idle callback fires too early — before the
+# compositor has repainted without the menu — leaving it visible in the shot.
+_MENU_CLOSE_MS = 300
+
+
 def _launch(args):
     subprocess.Popen(_base_cmd() + list(args), env=os.environ.copy())
 
@@ -50,10 +57,11 @@ def _build_menu():
     menu = Gtk.Menu()
     for label, args in MENU:
         item = Gtk.MenuItem(label=label)
-        # Defer the launch so the menu closes (and drops its grab) before the
-        # capture overlay appears — otherwise the menu lingers over the capture.
+        # Wait for the menu to actually disappear from the screen before the
+        # capture grabs, otherwise the menu shows up in the screenshot.
         item.connect("activate",
-                     lambda _w, a=args: GLib.idle_add(lambda: (_launch(a), False)[1]))
+                     lambda _w, a=args: GLib.timeout_add(
+                         _MENU_CLOSE_MS, lambda: (_launch(a), False)[1]))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
