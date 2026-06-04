@@ -5,7 +5,8 @@ A **CleanShot X-style** screenshot + annotation tool for **Pop!_OS / COSMIC on W
 The stock COSMIC screenshot tool captures fine but can't annotate on the spot.
 CosmicShot fills that gap: drag-select a region over a dimmed desktop, then land
 straight in an editor to draw arrows, boxes, text, blur sensitive bits, add numbered
-steps — and **copy, save, or pin** the result.
+steps — and **copy, save, or pin** the result. It also lives in your panel as a
+tray icon with a capture menu.
 
 ![CosmicShot in action](docs/cosmicshot-screenshot.png)
 
@@ -13,8 +14,9 @@ steps — and **copy, save, or pin** the result.
 
 - **Dimmed region selector** — drag to select with a live `W × H` readout, crosshair,
   and resize handles. Multi-monitor aware. `Esc` cancels.
-  - Each region capture starts with a **fresh crosshair**. `cosmicshot last` re-shoots
-    the previous region instantly (no overlay) when you want a repeat.
+- **Capture modes** — **region**, a whole **screen**, or a specific **app window**.
+- **Scrolling screenshots** — capture a long region or window and scroll; CosmicShot
+  stitches the frames into one tall image.
 - **Instant annotation editor** with tools:
   - **Direct manipulation with any tool** — you don't have to switch tools to edit an
     existing shape. Hover one (it highlights), then drag its **body to move** or a
@@ -44,54 +46,69 @@ steps — and **copy, save, or pin** the result.
   (default host: catbox.moe — free, no account, permanent links). `Ctrl+U`.
 - **Copy to clipboard**, **Save PNG**, or **Pin to screen** (floating, always-on-top;
   scroll to resize, drag to move, `Esc`/double-click to dismiss).
-- Capture modes: **region**, **full desktop**, **window** (via COSMIC's picker).
+- **Panel tray icon** with a capture menu, auto-started at login.
 - Single-key tool shortcuts and standard `Ctrl+Z/C/S`.
-
-## Requirements
-
-All available out-of-the-box on Pop!_OS 24.04 COSMIC; install any that are missing:
-
-```bash
-sudo apt install python3-gi python3-gi-cairo python3-pil \
-                 gir1.2-gtklayershell-0.1 wl-clipboard
-```
-
-CosmicShot also relies on `cosmic-screenshot` (ships with COSMIC) for the actual grab.
 
 ## Install
 
+CosmicShot also relies on `cosmic-screenshot` (ships with the COSMIC desktop) for the
+actual screen grab.
+
+### Recommended — `.deb` package (Pop!_OS / Ubuntu)
+
+Download the latest `cosmicshot_*.deb` from the
+[**Releases page**](https://github.com/davidboulay/CosmicShot/releases/latest), then:
+
 ```bash
+sudo apt install ./cosmicshot_1.0.0_all.deb
+```
+
+`apt` pulls in the dependencies automatically. This installs the `cosmicshot` command,
+a desktop entry, icons, and a login autostart for the panel tray icon. Launch
+**CosmicShot** from the app grid (it adds the tray icon) or bind a hotkey (below).
+
+To remove it:
+
+```bash
+sudo apt remove cosmicshot
+```
+
+### Alternative — per-user script (no root)
+
+Install the dependencies, then run the script:
+
+```bash
+sudo apt install python3-gi python3-gi-cairo python3-pil \
+                 gir1.2-gtklayershell-0.1 gir1.2-ayatanaappindicator3-0.1 wl-clipboard
 ./install.sh
 ```
 
 This copies the app to `~/.local/share/cosmicshot`, drops a `cosmicshot` launcher in
-`~/.local/bin`, and adds a desktop entry. (No root, no virtualenv — it uses your
-system Python packages.)
+`~/.local/bin`, adds a desktop entry, and sets up the tray autostart. No root, no
+virtualenv — it uses your system Python packages.
 
 ## Usage
 
 ```bash
 cosmicshot            # region capture (default) → edit
 cosmicshot region     # same
-cosmicshot last       # re-capture the last-used region, no overlay
-cosmicshot full       # the monitor your pointer is on → edit (whole desktop if single-screen)
-cosmicshot window     # COSMIC's window/region picker → edit
-cosmicshot open --file shot.png   # edit an existing image
-cosmicshot tray       # run a panel tray icon with a capture menu
+cosmicshot screen     # pick a whole screen → edit  (alias: cosmicshot full)
+cosmicshot window     # pick an app window → edit
+cosmicshot scroll --target region   # scrolling screenshot of a region
+cosmicshot scroll --target window   # scrolling screenshot of an app window
+cosmicshot open --file shot.png     # edit an existing image
+cosmicshot tray                     # run the panel tray icon with a capture menu
 ```
 
 ### Tray icon (CleanShot-style menu)
 
-`cosmicshot tray` adds a crosshair icon to the COSMIC panel with a capture menu
-(Region / Last / Screen / Window). To start it automatically at login:
+The installer sets up the tray to **start automatically at login**. It adds an icon to
+the COSMIC panel with a capture menu: **Capture Region**, **Capture Screen**,
+**Capture App Window**, and **Scrolling Screenshot** (region / app window). Each entry
+launches a capture in its own process.
 
-```bash
-mkdir -p ~/.config/autostart
-cp ~/.local/share/applications/cosmicshot.desktop ~/.config/autostart/cosmicshot-tray.desktop
-sed -i 's|^Exec=.*|Exec=cosmicshot tray|' ~/.config/autostart/cosmicshot-tray.desktop
-```
-
-> Needs `gir1.2-ayatanaappindicator3-0.1` (already present on most COSMIC installs).
+> Needs `gir1.2-ayatanaappindicator3-0.1` (already present on most COSMIC installs; the
+> `.deb` lists it as a recommended dependency).
 
 ### Editor keys
 
@@ -115,8 +132,7 @@ COSMIC Settings → **Keyboard** → **Keyboard Shortcuts** → **Custom Shortcu
 | Shortcut | Command |
 |----------|---------|
 | `Super+Shift+S` (or `PrtSc`) | `cosmicshot region` |
-| `Super+Shift+R` | `cosmicshot last` (re-shoot last region) |
-| `Super+Shift+F` | `cosmicshot full` |
+| `Super+Shift+F` | `cosmicshot screen` |
 
 > If `PrtSc` is already bound to the stock tool, remove/rebind that first.
 > Custom shortcuts are also stored under
@@ -163,12 +179,15 @@ windows use `gtk-layer-shell` to sit above everything; rendering is cairo.
 cosmicshot/
   app.py        orchestration + CLI
   capture.py    cosmic-screenshot wrapper + monitor geometry
-  overlay.py    dimmed region selector (layer-shell, per monitor)
+  overlay.py    dimmed region selector + screen/window pickers + scroll capture
+  scroll.py     scrolling-screenshot frame stitcher
+  windows.py    per-window geometry (COSMIC toplevel-info protocol)
   editor.py     annotation editor window (canvas, toolbar, undo/redo)
   tools.py      annotation primitives (arrow, rect, text, blur, …)
   imaging.py    PIL ↔ cairo, pixelate/blur source
   export.py     render → clipboard / disk / png bytes
   pin.py        floating always-on-top pinned screenshot
+  tray.py       panel tray icon with the capture menu
   config.py     settings
 ```
 
@@ -178,7 +197,8 @@ cosmicshot/
   `cosmic-screenshot --interactive=false --save-dir /tmp`.
 - **Overlay doesn't appear** — check `gir1.2-gtklayershell-0.1` is installed.
 - **Copy does nothing** — install `wl-clipboard`; verify with `wl-paste --list-types`.
-- **`cosmicshot: command not found`** — add `~/.local/bin` to your `PATH`.
+- **No tray icon** — install `gir1.2-ayatanaappindicator3-0.1`, then run `cosmicshot tray`.
+- **`cosmicshot: command not found`** (script install) — add `~/.local/bin` to your `PATH`.
 
 ## License
 
