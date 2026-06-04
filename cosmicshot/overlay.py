@@ -13,6 +13,28 @@ DIM = (0, 0, 0, 0.45)
 ACCENT = (0.0, 0.48, 1.0)  # selection border
 
 
+def dismiss_popups(settle_ms=220):
+    """Force any open panel menu/popup to close before a screen grab.
+
+    The COSMIC panel renders its tray (StatusNotifierItem) menu itself and keeps
+    it open after a click, so a tray-launched capture would grab it into the
+    shot. Briefly mapping a layer-shell surface that takes the keyboard makes the
+    compositor dismiss the popup; we then tear it down and let the caller grab a
+    clean desktop."""
+    win = Gtk.Window()
+    win.set_default_size(1, 1)
+    win.set_opacity(0.0)                       # invisible even if it lingers
+    GtkLayerShell.init_for_window(win)
+    GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+    GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+    win.show_all()
+    GLib.timeout_add(settle_ms, Gtk.main_quit)
+    Gtk.main()
+    win.destroy()
+    while Gtk.events_pending():
+        Gtk.main_iteration()
+
+
 class _MonitorOverlay(Gtk.Window):
     def __init__(self, controller, monitor, gdk_monitor, surface):
         super().__init__()

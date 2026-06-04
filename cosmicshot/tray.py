@@ -42,26 +42,25 @@ def _base_cmd():
     return [sys.executable, "-m", "cosmicshot"]
 
 
-# Delay (ms) between dismissing the menu and grabbing the screen. The capture
-# (cosmic-screenshot) grabs the compositor's current frame, and the panel menu
-# is rendered by the COSMIC panel (not us), so we must force it closed AND wait
-# for the panel to actually remove it from the screen — otherwise it lands in
-# the screenshot.
-_MENU_CLOSE_MS = 600
+# Small settle after the click before launching; the launched process then
+# actively dismisses the (panel-rendered) menu before grabbing — see
+# overlay.dismiss_popups / COSMICSHOT_FROM_TRAY in app.main.
+_MENU_CLOSE_MS = 120
 
 
 def _launch(args):
-    subprocess.Popen(_base_cmd() + list(args), env=os.environ.copy())
+    env = os.environ.copy()
+    env["COSMICSHOT_FROM_TRAY"] = "1"          # capture dismisses the panel menu
+    subprocess.Popen(_base_cmd() + list(args), env=env)
 
 
 def _on_activate(item, args):
     parent = item.get_parent()
     if parent is not None:
         try:
-            parent.popdown()       # ask the menu to close right now
+            parent.popdown()
         except Exception:
             pass
-    # …then wait for the panel to repaint without it before grabbing.
     GLib.timeout_add(_MENU_CLOSE_MS, lambda: (_launch(args), False)[1])
 
 
