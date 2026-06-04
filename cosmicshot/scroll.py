@@ -56,6 +56,35 @@ def detect_overlap(a: Image.Image, b: Image.Image) -> Tuple[int, float]:
     return best_s, (best_err if best_err is not None else 999.0)
 
 
+def _refine_shift(a: Image.Image, b: Image.Image, coarse: int, span: int = 3) -> int:
+    """Refine a coarse shift to pixel-exact using FULL-width rows (the coarse
+    match is on a downscaled width, so it can be off by 1-2px -> seam lines)."""
+    ag = a.convert("L"); bg = b.convert("L")
+    w = ag.width; h = ag.height
+    ad = ag.tobytes(); bd = bg.tobytes()
+    band_h = min(_BAND_H, h // 2)
+    if band_h <= 0:
+        return coarse
+    atop = h - band_h
+    best_s, best_err = coarse, None
+    lo = max(1, coarse - span)
+    hi = min(h - band_h, coarse + span + 1)
+    for s in range(lo, hi):
+        btop = atop - s
+        if btop < 0:
+            continue
+        err = 0
+        for r in range(0, band_h, 2):          # every other row is plenty here
+            ao = (atop + r) * w
+            bo = (btop + r) * w
+            for c in range(0, w, 2):            # and every other column
+                d = ad[ao + c] - bd[bo + c]
+                err += d if d >= 0 else -d
+        if best_err is None or err < best_err:
+            best_err, best_s = err, s
+    return best_s
+
+
 def changed(a: Image.Image, b: Image.Image) -> bool:
     """Did the view move at all between two frames (cheap full-frame diff)?"""
     ad, w, h = _gray(a)
@@ -88,6 +117,7 @@ def stitch(frames: List[Image.Image], min_step: int = 4) -> Optional[Image.Image
         s, err = detect_overlap(prev, cur)
         if s < min_step or not is_confident(err):
             continue
+        s = _refine_shift(prev, cur, s)   # pixel-exact cut -> no seam line
         new_strip = cur.crop((0, cur.height - s, w, cur.height)).convert("RGB")
         merged = Image.new("RGB", (w, canvas.height + s))
         merged.paste(canvas, (0, 0))
