@@ -182,10 +182,10 @@ def mode_record(cfg, target="region"):
     from .record import RecordingSession
     sess = RecordingSession(target, save_dir, region=region, monitors=monitors)
     saved = sess.run()
-    if sess.error:
+    if saved and os.path.exists(saved):
+        export.notify("Recording saved", sess.error or saved, saved)
+    elif sess.error:
         export.notify("CosmicShot — recording failed", sess.error)
-    elif saved and os.path.exists(saved):
-        export.notify("Recording saved", saved, saved)
 
 
 def mode_open(cfg, path):
