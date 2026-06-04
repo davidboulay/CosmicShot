@@ -144,9 +144,10 @@ def mode_scroll(cfg, target="region"):
         return  # cancelled
     from . import inject, overlay, scroll
     monitors = capture.list_monitors()
-    # Auto-scroll (the app scrolls for you) when input injection works; else
-    # fall back to manual scrolling.
-    if inject.available():
+    # Auto-scroll (the app scrolls the window for you) for screen/app-window;
+    # region capture stays manual (auto-scrolling an arbitrary sub-region is
+    # unreliable — there's no single window to drive). Auto needs uinput.
+    if target != "region" and inject.available():
         sc = overlay.AutoScrollCapture(rect, monitors, capture)
     else:
         sc = overlay.ScrollCapture(rect, monitors, capture)
