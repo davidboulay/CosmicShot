@@ -524,11 +524,16 @@ class _DimWindow(Gtk.Window):
         self.area.connect("draw", self._draw)
         self.add(self.area)
         self.connect("realize", self._make_click_through)
+        self.connect("map-event", self._make_click_through)
 
-    def _make_click_through(self, _w):
+    def _make_click_through(self, *_):
+        # Empty input region -> the whole surface is click-through, so scroll
+        # (and all pointer events) reach the real window underneath. Applied at
+        # the widget level and re-applied on map so GTK can't reset it.
+        self.input_shape_combine_region(cairo.Region())
         win = self.get_window()
         if win is not None:
-            win.input_shape_combine_region(cairo.Region(), 0, 0)  # empty = pass all
+            win.input_shape_combine_region(cairo.Region(), 0, 0)
 
     def _draw(self, _w, cr):
         a = self.area.get_allocation()
