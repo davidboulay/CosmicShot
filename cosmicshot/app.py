@@ -164,6 +164,33 @@ def mode_scroll(cfg, target="region"):
     _run_editor(stitched.convert("RGBA"), cfg)
 
 
+def _video_path(cfg):
+    import time
+    d = cfg.get("save_dir") or str(os.path.join(os.path.expanduser("~"), "Videos"))
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, time.strftime("CosmicShot_%Y-%m-%d_%H-%M-%S.mp4"))
+
+
+def mode_record(cfg, target="region"):
+    """Record video of a region / app window / whole screen to an mp4 via the
+    ScreenCast portal. The portal natively picks the window or monitor; region
+    additionally crops to the selected rectangle."""
+    region = None
+    if target == "region":
+        region = _pick_rect("region")
+        if not region:
+            return  # cancelled before recording
+    out = _video_path(cfg)
+    monitors = capture.list_monitors()
+    from .record import RecordingSession
+    sess = RecordingSession(target, out, region=region, monitors=monitors)
+    saved = sess.run()
+    if sess.error:
+        export.notify("CosmicShot — recording failed", sess.error)
+    elif saved and os.path.exists(saved):
+        export.notify("Recording saved", saved, saved)
+
+
 def mode_open(cfg, path):
     img = Image.open(path).convert("RGBA")
     _run_editor(img, cfg)
@@ -176,15 +203,16 @@ def main(argv=None):
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
     p.add_argument("mode", nargs="?", default="region",
                    choices=["region", "full", "screen", "window", "scroll",
-                            "open", "tray"],
+                            "record", "open", "tray"],
                    help="region (default): drag-select then edit; "
                         "screen/full: pick a whole screen; window: pick an app "
                         "window; scroll: scrolling screenshot (--target); "
+                        "record: record video (--target); "
                         "open: edit an existing image (give --file); "
                         "tray: run the panel tray icon.")
     p.add_argument("--target", default="region",
                    choices=["region", "screen", "window"],
-                   help="what to capture in 'scroll' mode (default: region)")
+                   help="what to capture in 'scroll'/'record' mode (default: region)")
     p.add_argument("--file", help="image path for 'open' mode")
     args = p.parse_args(argv)
 
@@ -221,6 +249,8 @@ def main(argv=None):
             mode_window(cfg)
         elif args.mode == "scroll":
             mode_scroll(cfg, args.target)
+        elif args.mode == "record":
+            mode_record(cfg, args.target)
         elif args.mode == "open":
             if not args.file:
                 p.error("open mode requires --file PATH")

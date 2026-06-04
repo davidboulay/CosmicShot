@@ -32,6 +32,10 @@ MENU = [
     ("Capture App Window…", ["window"]),
     ("Scrolling Screenshot (Region)…", ["scroll", "--target", "region"]),
     ("Scrolling Screenshot (App Window)…", ["scroll", "--target", "window"]),
+    None,  # separator
+    ("Record Region…", ["record", "--target", "region"]),
+    ("Record App Window…", ["record", "--target", "window"]),
+    ("Record Screen…", ["record", "--target", "screen"]),
 ]
 
 
@@ -48,7 +52,11 @@ def _launch(args):
 
 def _build_menu():
     menu = Gtk.Menu()
-    for label, args in MENU:
+    for entry in MENU:
+        if entry is None:
+            menu.append(Gtk.SeparatorMenuItem())
+            continue
+        label, args = entry
         item = Gtk.MenuItem(label=label)
         # Defer the launch so the menu closes (and drops its grab) before the
         # capture overlay appears — otherwise the menu lingers over the capture.
