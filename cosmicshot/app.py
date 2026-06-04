@@ -146,7 +146,7 @@ def mode_scroll(cfg, target="region"):
     monitors = capture.list_monitors()
     sc = overlay.ScrollCapture(rect, monitors, capture)
     frames = sc.run()
-    if sc._too_fast:
+    if sc.too_fast:
         export.notify("CosmicShot", "Scrolled too fast — please retry, scrolling slowly.")
         return
     if not frames:
