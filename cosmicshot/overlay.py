@@ -499,13 +499,18 @@ class WindowPicker:
 
 
 class _DimWindow(Gtk.Window):
-    """Per-monitor dim layer with a transparent hole over the capture region, so
-    the user focuses on the area being scrolled. Click-through (empty input
-    region) so scroll events reach the real window underneath; the transparent
-    hole means the screenshot grab still sees the live content there."""
+    """Per-monitor dim layer with a transparent hole over the capture region.
 
-    def __init__(self, monitor, gdk_monitor, region):
+    Pointer-transparent (empty input region) so scrolling reaches the window
+    underneath and the screenshot grab sees live content through the hole. The
+    accent border and the status/instruction text are drawn OUTSIDE the hole
+    (in the dimmed area), so they never appear in the captured frames. The
+    primary window also takes keyboard focus for Enter (done) / Esc (cancel) —
+    there is no separate control bar to contaminate the shot."""
+
+    def __init__(self, controller, monitor, gdk_monitor, region, keyboard):
         super().__init__()
+        self.controller = controller
         self.m = monitor
         self.region = region
         self.set_app_paintable(True)
@@ -520,16 +525,25 @@ class _DimWindow(Gtk.Window):
                      GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM):
             GtkLayerShell.set_anchor(self, edge, True)
         GtkLayerShell.set_exclusive_zone(self, -1)
+        if keyboard:
+            GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+            self.connect("key-press-event", self._on_key)
         self.area = Gtk.DrawingArea()
         self.area.connect("draw", self._draw)
         self.add(self.area)
         self.connect("realize", self._make_click_through)
         self.connect("map-event", self._make_click_through)
 
+    def _on_key(self, _w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            self.controller.cancel()
+        elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self.controller.finish()
+        return True
+
     def _make_click_through(self, *_):
-        # Empty input region -> the whole surface is click-through, so scroll
-        # (and all pointer events) reach the real window underneath. Applied at
-        # the widget level and re-applied on map so GTK can't reset it.
+        # Empty input region -> pointer events (incl. scroll) pass through to the
+        # window underneath. Keyboard focus is unaffected (set via layer-shell).
         self.input_shape_combine_region(cairo.Region())
         win = self.get_window()
         if win is not None:
@@ -543,27 +557,54 @@ class _DimWindow(Gtk.Window):
         cr.set_source_rgba(0, 0, 0, 0.55)
         cr.rectangle(0, 0, a.width, a.height)
         cr.fill()
-        # punch the region hole (in this monitor's local coords)
         rx, ry, rw, rh = self.region
         lx, ly = (rx - self.m.x) * sx, (ry - self.m.y) * sy
         lw, lh = rw * sx, rh * sy
-        cr.set_source_rgba(0, 0, 0, 0)
+        cr.set_source_rgba(0, 0, 0, 0)            # transparent hole = the region
         cr.rectangle(lx, ly, lw, lh)
         cr.fill()
         cr.set_operator(cairo.OPERATOR_OVER)
-        cr.set_source_rgb(*ACCENT)
+        cr.set_source_rgb(*ACCENT)                # border drawn OUTSIDE the hole
         cr.set_line_width(2)
-        cr.rectangle(lx, ly, lw, lh)
+        cr.rectangle(lx - 2, ly - 2, lw + 4, lh + 4)
         cr.stroke()
+        self._draw_status(cr, a, lx, ly, lw, lh)
         return False
+
+    def _draw_status(self, cr, a, lx, ly, lw, lh):
+        text = self.controller.status_text()
+        too_fast = self.controller.too_fast
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL,
+                            cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(15)
+        ext = cr.text_extents(text)
+        pad = 12
+        bw, bh = ext.width + 2 * pad, ext.height + 2 * pad
+        bx = lx + (lw - bw) / 2                   # centered on the region
+        # Place the pill in the dim band below the region, else above it.
+        if ly + lh + 16 + bh < a.height:
+            by = ly + lh + 16
+        elif ly - 16 - bh > 0:
+            by = ly - 16 - bh
+        else:
+            by = 16
+        if too_fast:
+            cr.set_source_rgba(0.55, 0.10, 0.10, 0.92)
+        else:
+            cr.set_source_rgba(0, 0, 0, 0.85)
+        _MonitorOverlay._round_rect(cr, bx, by, bw, bh, 9)
+        cr.fill()
+        cr.set_source_rgb(1, 1, 1)
+        cr.move_to(bx + pad, by + pad + ext.height)
+        cr.show_text(text)
 
 
 class ScrollCapture:
-    """Manual-scroll capture. A region has been chosen; dim everything else,
-    grab frames of the region on a background thread while the user scrolls, and
-    return the frames to stitch. If the user scrolls too fast (consecutive
-    frames stop overlapping) the result can't be stitched, so we flag it and
-    require a cancel + retry. Returns [] if cancelled / too fast."""
+    """Manual-scroll capture. Dim everything except the region, grab frames of
+    the region on a background thread while the user scrolls down, and stitch
+    them. Up-scroll frames are ignored; scrolling too fast (a downward gap with
+    no overlap) is flagged and requires a cancel + retry. Returns [] if
+    cancelled or too fast."""
 
     def __init__(self, region, monitors, capture_mod):
         self.region = region
@@ -572,52 +613,18 @@ class ScrollCapture:
         self.frames = []
         self._running = False
         self._cancelled = False
-        self._too_fast = False
+        self.too_fast = False
         self._thread = None
         self.dims = []
-        self.bar = None
-        self.status = None
-        self.done_btn = None
 
-    def _build_bar(self):
-        win = Gtk.Window()
-        GtkLayerShell.init_for_window(win)
-        GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
-        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.BOTTOM, True)
-        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.BOTTOM, 48)
-        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.get_style_context().add_class("scroll-bar")
-        box.set_margin_top(10); box.set_margin_bottom(10)
-        box.set_margin_start(16); box.set_margin_end(16)
-        win.add(box)
-        self.status = Gtk.Label()
-        self.status.set_markup("Scroll down slowly…  <b>0</b> frames")
-        box.pack_start(self.status, False, False, 0)
-        self.done_btn = Gtk.Button(label="Done (↵)")
-        self.done_btn.connect("clicked", lambda _b: self._finish())
-        box.pack_start(self.done_btn, False, False, 0)
-        cancel = Gtk.Button(label="Cancel (Esc)")
-        cancel.connect("clicked", lambda _b: self._cancel())
-        box.pack_start(cancel, False, False, 0)
-        win.connect("key-press-event", self._on_key)
-        self.bar = win
+    def status_text(self):
+        if self.too_fast:
+            return "Too fast — press Esc and retry, scrolling slower"
+        return f"Scroll down slowly   ·   {len(self.frames)} frames   ·   ↵ done   ·   Esc cancel"
 
-    def _on_key(self, _w, ev):
-        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
-            self._cancel()
-        elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not self._too_fast:
-            self._finish()
-        return True
-
-    def _set_status(self, n):
-        if self._too_fast:
-            self.status.set_markup(
-                "<span foreground='#ff5c5c'><b>Too fast — Cancel and retry, "
-                "scrolling slower.</b></span>")
-            self.done_btn.set_sensitive(False)
-        else:
-            self.status.set_markup(f"Scroll down slowly…  <b>{n}</b> frames")
+    def _redraw(self):
+        for d in self.dims:
+            d.area.queue_draw()
         return False
 
     def _worker(self):
@@ -637,23 +644,25 @@ class ScrollCapture:
                 continue
             if last_kept is None:
                 self.frames.append(frame); last_kept = frame
-                GLib.idle_add(self._set_status, len(self.frames))
+                GLib.idle_add(self._redraw)
             elif _scroll.changed(last_kept, frame):
-                shift, err = _scroll.detect_overlap(last_kept, frame)
-                if shift >= 4 and _scroll.is_confident(err):
+                down_s, down_e = _scroll.detect_overlap(last_kept, frame)
+                up_s, up_e = _scroll.detect_overlap(frame, last_kept)
+                if _scroll.is_confident(down_e) and down_e <= up_e and down_s >= 4:
                     self.frames.append(frame); last_kept = frame
-                    GLib.idle_add(self._set_status, len(self.frames))
+                    GLib.idle_add(self._redraw)
+                elif _scroll.is_confident(up_e):
+                    pass            # scrolled back up — ignore, keep continuity
                 else:
-                    # view moved but no overlap with the last good frame: a gap.
-                    self._too_fast = True
-                    GLib.idle_add(self._set_status, len(self.frames))
+                    self.too_fast = True
+                    GLib.idle_add(self._redraw)
             time.sleep(0.12)
 
-    def _finish(self):
+    def finish(self):
         self._running = False
         self._teardown()
 
-    def _cancel(self):
+    def cancel(self):
         self._running = False
         self._cancelled = True
         self._teardown()
@@ -661,27 +670,23 @@ class ScrollCapture:
     def _teardown(self):
         for d in self.dims:
             d.destroy()
-        if self.bar is not None:
-            self.bar.destroy()
         GLib.idle_add(Gtk.main_quit)
 
     def run(self):
         import threading
         display = Gdk.Display.get_default()
-        for m in self.monitors:
+        for i, m in enumerate(self.monitors):
             gm = display.get_monitor(m.index)
-            d = _DimWindow(m, gm, self.region)
+            d = _DimWindow(self, m, gm, self.region, keyboard=(i == 0))
             self.dims.append(d)
             d.show_all()
-        self._build_bar()
-        self.bar.show_all()
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
         Gtk.main()
         if self._thread:
             self._thread.join(timeout=2)
-        if self._cancelled or self._too_fast:
+        if self._cancelled or self.too_fast:
             return []
         return self.frames
 
