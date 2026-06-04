@@ -930,11 +930,16 @@ class ScrollCapture:
                     self.monitors[0])
         bar_h, gap = 64, 14
         below = (ry + rh - host.y) + gap                 # margin from monitor top
+        above = (ry - host.y) - gap - bar_h
         if below + bar_h <= host.height:
-            top_margin = below
+            top_margin = below                           # below region (clear)
+            self._hide_bar_on_grab = False
+        elif above >= 8:
+            top_margin = above                           # above region (clear)
+            self._hide_bar_on_grab = False
         else:
-            top_margin = max(8, (ry - host.y) - gap - bar_h)  # above the region
-        self._hide_bar_on_grab = True
+            top_margin = 8                               # region fills the screen
+            self._hide_bar_on_grab = True                # must hide during grab
         self.ctrl = _ControlBar(self, display.get_monitor(host.index),
                                  top_margin=top_margin)
         self.ctrl.show_all()
