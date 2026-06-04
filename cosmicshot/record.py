@@ -604,13 +604,16 @@ class RecordingSession:
             traceback.print_exc()
             return self._on_error(str(exc))
         self._started = True
-        # Full-screen has nowhere off-screen to put a control card, so hand the
-        # Stop button to the panel (tray) instead — nothing of ours then appears
-        # in the recording. Other targets keep the floating card off the region.
+        # Stop lives in the panel (the red ⏹ tray button) for every mode when a
+        # tray is running. Region/app-window ALSO keep the floating card off the
+        # recorded area; full-screen has nowhere off-screen for a card, so it
+        # relies on the panel alone (and only falls back to a card if there's no
+        # tray to host the Stop button).
         from . import lock
-        if self.target == "screen" and lock.tray_pid():
+        have_tray = bool(lock.tray_pid())
+        if have_tray:
             self._enter_panel_mode()
-        else:
+        if self.target != "screen" or not have_tray:
             if self.target == "region" and self.region:
                 self._dim = _RegionDim(self.region, self.monitors)
             self._build_control()
