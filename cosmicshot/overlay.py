@@ -655,66 +655,83 @@ class AutoScrollCapture:
         GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
         return frame
 
+    def _desktop_bounds(self):
+        x0 = min(m.x for m in self.monitors)
+        y0 = min(m.y for m in self.monitors)
+        x1 = max(m.x + m.width for m in self.monitors)
+        y1 = max(m.y + m.height for m in self.monitors)
+        return (x0, y0, x1 - x0, y1 - y0)
+
     def _worker(self):
         import time
         from . import inject, scroll as _scroll
-        vh = self.region[3]
+        rx, ry, rw, vh = self.region
+        center = (rx + rw / 2, ry + vh / 2)
         try:
-            scroller = inject.Scroller()
+            # Absolute positioning: park the pointer over the target so scrolling
+            # is independent of the user's real mouse.
+            scroller = inject.Scroller(desktop=self._desktop_bounds())
         except Exception:
             self._cancelled = True
             GLib.idle_add(self._teardown)
             return
 
-        # Phase 1: rewind to the top so we always start from the beginning.
+        def step(ticks, settle):
+            scroller.scroll(ticks)
+            time.sleep(settle)
+            return self._grab()
+
+        # Park the pointer over the target once (not every step — re-asserting
+        # would fight the user reaching for Stop). The pointer then stays put.
+        scroller.move_to(*center)
+
+        # Phase 1: fast rewind to the top (big upward bursts until no movement).
         GLib.idle_add(self._status, "Rewinding to top…")
         prev = self._grab()
         stable = 0
-        for _ in range(400):
+        for _ in range(80):
             if not self._running:
                 break
-            scroller.scroll(8)          # positive = up
-            time.sleep(0.16)
-            cur = self._grab()
+            cur = step(24, 0.22)             # large up burst
             if cur is None:
                 continue
-            if prev is not None and not _scroll.changed(prev, cur):
+            s, _e = _scroll.detect_overlap(cur, prev)   # cur->prev moved up = we went up
+            if prev is not None and s < 4 and not _scroll.changed(prev, cur):
                 stable += 1
                 if stable >= 2:
-                    break               # reached the top
+                    break                    # at the top
             else:
                 stable = 0
             prev = cur
 
-        # Phase 2: capture downward in controlled steps (guaranteed overlap).
+        # Phase 2: capture downward. Steps stop at the bottom (no vertical shift).
         self.frames = []
         last = self._grab()
         if last is not None:
             self.frames.append(last)
         GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
-        ticks, nochange = 3, 0
+        ticks, stall = 8, 0
         while self._running and len(self.frames) < self.MAX_FRAMES:
-            scroller.scroll_down(ticks)
-            time.sleep(0.38)            # let smooth-scroll settle before grabbing
-            cur = self._grab()
+            cur = step(ticks, 0.34)
             if cur is None:
                 continue
-            if not _scroll.changed(last, cur):
-                nochange += 1
-                if nochange >= 2:
-                    break               # reached the bottom
-                continue
-            nochange = 0
             s, err = _scroll.detect_overlap(last, cur)
-            if _scroll.is_confident(err) and s >= 4:
+            if s < 4:                         # no vertical movement -> bottom
+                stall += 1
+                if stall >= 2:
+                    break
+                ticks = min(ticks + 4, 30)    # nudge harder in case it was stuck
+                continue
+            stall = 0
+            if _scroll.is_confident(err):
                 self.frames.append(cur); last = cur
                 GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
-                if s < 0.35 * vh:
-                    ticks = min(ticks + 1, 12)   # speed up if steps are small
-                elif s > 0.6 * vh:
-                    ticks = max(1, ticks - 1)    # ease off if nearing no-overlap
+                if s < 0.45 * vh:
+                    ticks = min(ticks + 3, 30)   # speed up if steps are small
+                elif s > 0.75 * vh:
+                    ticks = max(2, ticks - 3)    # ease off near no-overlap
             else:
-                ticks = max(1, ticks - 1)        # animation/overshoot: slow down
+                ticks = max(2, ticks - 3)        # overshoot/animation: slow down
 
         scroller.close()
         self._running = False
