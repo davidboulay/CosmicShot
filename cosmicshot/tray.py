@@ -79,6 +79,53 @@ def _build_menu():
     return menu
 
 
+def _stop_recording(*_):
+    """Tell the active recording (full-screen) to stop and save."""
+    import signal
+    from . import lock
+    pid = lock.recording_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGUSR1)
+        except OSError:
+            pass
+
+
+def _build_recording_menu():
+    menu = Gtk.Menu()
+    stop = Gtk.MenuItem(label="⏹  Stop recording")
+    stop.connect("activate", _stop_recording)
+    menu.append(stop)
+    menu.append(Gtk.SeparatorMenuItem())
+    quit_item = Gtk.MenuItem(label="Quit CosmicShot")
+    quit_item.connect("activate", lambda *_: Gtk.main_quit())
+    menu.append(quit_item)
+    menu.show_all()
+    return menu
+
+
+def _apply_state(ind):
+    """Reflect whether a recording is in progress in the panel: a red Stop
+    menu + "REC" label while recording, the normal capture menu otherwise."""
+    from . import lock
+    recording = lock.recording_pid() is not None
+    if recording:
+        ind.set_menu(_build_recording_menu())
+        try:
+            ind.set_label("● REC", "● REC")
+        except Exception:
+            pass
+        ind.set_icon_full("media-record", "Recording")
+    else:
+        ind.set_menu(_build_menu())
+        try:
+            ind.set_label("", "")
+        except Exception:
+            pass
+        ind.set_icon_full(config.APP_ID, config.APP_NAME)
+    return False  # for GLib.unix_signal_add (stay registered via re-add below)
+
+
 def run_tray(cfg=None):
     if _AppIndicator is None:
         raise RuntimeError(
@@ -103,4 +150,14 @@ def run_tray(cfg=None):
         ind.set_icon_theme_path(os.path.dirname(config.ICON_FILE))
     ind.set_icon_full(config.APP_ID, config.APP_NAME)
     ind.set_menu(_build_menu())
+
+    # Let a full-screen recording hand its Stop button to the panel: publish our
+    # PID and refresh the menu/icon whenever a recording signals us (SIGUSR1).
+    import signal
+    from . import lock
+    lock.write_tray_pid()
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                         lambda: (_apply_state(ind), True)[1])
+    _apply_state(ind)  # in case a recording is already running
+
     Gtk.main()
