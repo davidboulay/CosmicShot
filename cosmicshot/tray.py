@@ -42,26 +42,34 @@ def _base_cmd():
     return [sys.executable, "-m", "cosmicshot"]
 
 
-# Delay (ms) between dismissing the menu and grabbing the screen. The grab
-# (cosmic-screenshot) captures the compositor's current frame, so the menu must
-# be fully unmapped first; an idle callback fires too early — before the
-# compositor has repainted without the menu — leaving it visible in the shot.
-_MENU_CLOSE_MS = 300
+# Delay (ms) between dismissing the menu and grabbing the screen. The capture
+# (cosmic-screenshot) grabs the compositor's current frame, and the panel menu
+# is rendered by the COSMIC panel (not us), so we must force it closed AND wait
+# for the panel to actually remove it from the screen — otherwise it lands in
+# the screenshot.
+_MENU_CLOSE_MS = 600
 
 
 def _launch(args):
     subprocess.Popen(_base_cmd() + list(args), env=os.environ.copy())
 
 
+def _on_activate(item, args):
+    parent = item.get_parent()
+    if parent is not None:
+        try:
+            parent.popdown()       # ask the menu to close right now
+        except Exception:
+            pass
+    # …then wait for the panel to repaint without it before grabbing.
+    GLib.timeout_add(_MENU_CLOSE_MS, lambda: (_launch(args), False)[1])
+
+
 def _build_menu():
     menu = Gtk.Menu()
     for label, args in MENU:
         item = Gtk.MenuItem(label=label)
-        # Wait for the menu to actually disappear from the screen before the
-        # capture grabs, otherwise the menu shows up in the screenshot.
-        item.connect("activate",
-                     lambda _w, a=args: GLib.timeout_add(
-                         _MENU_CLOSE_MS, lambda: (_launch(a), False)[1]))
+        item.connect("activate", lambda w, a=args: _on_activate(w, a))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
