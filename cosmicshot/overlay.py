@@ -835,6 +835,7 @@ class ScrollCapture:
         self.too_fast = False        # kept for API compat; never blocks now
         self._warn = None            # None | "up" | "gap" — shown in the status
         self._do_reset = False       # set by the Reset button; worker restarts
+        self._await_reset = False    # latched after scrolling up: pause until Reset
         self._hide_bar_on_grab = False
         self._thread = None
         self.dims = []
@@ -863,9 +864,10 @@ class ScrollCapture:
     def primary_action(self):
         # While scrolling up, the primary button is "Reset" (restart capture at
         # the current position); otherwise it's "Done" (finish).
-        if self._warn == "up":
+        if self._warn == "up" or self._await_reset:
             # Instant feedback on the click; the worker rebuilds the base.
             self._warn = None
+            self._await_reset = False
             self.frames = []
             self._do_reset = True
             if self.ctrl:
@@ -927,6 +929,7 @@ class ScrollCapture:
                     if base is not None:
                         self.frames = [base]; last_kept = prev = base
                     self._do_reset = False; self._warn = None
+                    self._await_reset = False
                     GLib.idle_add(self._update_status)
                     time.sleep(0.05); continue
 
@@ -936,6 +939,13 @@ class ScrollCapture:
                 if last_kept is None:
                     self.frames.append(frame); last_kept = prev = frame
                     GLib.idle_add(self._update_status)
+                    time.sleep(0.05); continue
+
+                # Latched after scrolling up: pause capture entirely and wait for
+                # the user to click Reset (it never auto-resumes). They can scroll
+                # to wherever they want capture to restart in the meantime.
+                if self._await_reset:
+                    prev = frame
                     time.sleep(0.05); continue
 
                 # Instantaneous direction, measured against the previous grab.
@@ -952,9 +962,10 @@ class ScrollCapture:
                         going_up = _scroll.is_confident(uu_e) and uu_s >= 4
 
                 if going_up:
-                    # Wrong direction: warn and offer Reset. If they instead
-                    # scroll back down into overlap, capture just resumes.
+                    # Wrong direction: latch into "waiting for Reset". Capture
+                    # pauses and the button shows Reset until the user clicks it.
                     self._warn = "up"
+                    self._await_reset = True
                     GLib.idle_add(self._update_status)
                 elif _scroll.changed(last_kept, frame):
                     d_s, d_e = _scroll.detect_overlap(last_kept, frame)
