@@ -346,10 +346,14 @@ class Editor(Gtk.Window):
 
     def _on_dark_changed(self, spin):
         self.spotlight_darkness = spin.get_value() / 100.0
-        sel = self.selected
-        if isinstance(sel, tools.Spotlight):
+        # All spotlights share one combined dim layer, so the darkness applies
+        # to every focus zone — not just the selected one (which, via the
+        # max-darkness blend, made the slider look dead with 2+ zones).
+        spots = [a for a in self.annotations if isinstance(a, tools.Spotlight)]
+        if spots:
             self._push_undo()
-            sel.darkness = self.spotlight_darkness
+            for s in spots:
+                s.darkness = self.spotlight_darkness
             self.canvas.queue_draw()
 
     def _style_swatch(self, btn, hexc):
