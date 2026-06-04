@@ -500,17 +500,13 @@ class WindowPicker:
 
 class _DimWindow(Gtk.Window):
     """Per-monitor dim layer with a transparent hole over the capture region.
+    Purely VISUAL and pointer click-through, so scrolling reaches the window
+    underneath and the grab sees live content through the hole. It never takes
+    keyboard or pointer input — all controls live on the separate _ControlBar,
+    which is a normal (non-click-through) window so it always works."""
 
-    Pointer-transparent (empty input region) so scrolling reaches the window
-    underneath and the screenshot grab sees live content through the hole. The
-    accent border and the status/instruction text are drawn OUTSIDE the hole
-    (in the dimmed area), so they never appear in the captured frames. The
-    primary window also takes keyboard focus for Enter (done) / Esc (cancel) —
-    there is no separate control bar to contaminate the shot."""
-
-    def __init__(self, controller, monitor, gdk_monitor, region, keyboard):
+    def __init__(self, monitor, gdk_monitor, region):
         super().__init__()
-        self.controller = controller
         self.m = monitor
         self.region = region
         self.set_app_paintable(True)
@@ -525,25 +521,14 @@ class _DimWindow(Gtk.Window):
                      GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM):
             GtkLayerShell.set_anchor(self, edge, True)
         GtkLayerShell.set_exclusive_zone(self, -1)
-        if keyboard:
-            GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-            self.connect("key-press-event", self._on_key)
+        # No keyboard for the dim layer (the control bar owns input).
         self.area = Gtk.DrawingArea()
         self.area.connect("draw", self._draw)
         self.add(self.area)
         self.connect("realize", self._make_click_through)
         self.connect("map-event", self._make_click_through)
 
-    def _on_key(self, _w, ev):
-        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
-            self.controller.cancel()
-        elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            self.controller.finish()
-        return True
-
     def _make_click_through(self, *_):
-        # Empty input region -> pointer events (incl. scroll) pass through to the
-        # window underneath. Keyboard focus is unaffected (set via layer-shell).
         self.input_shape_combine_region(cairo.Region())
         win = self.get_window()
         if win is not None:
@@ -564,47 +549,71 @@ class _DimWindow(Gtk.Window):
         cr.rectangle(lx, ly, lw, lh)
         cr.fill()
         cr.set_operator(cairo.OPERATOR_OVER)
-        cr.set_source_rgb(*ACCENT)                # border drawn OUTSIDE the hole
+        cr.set_source_rgb(*ACCENT)                # border OUTSIDE the hole
         cr.set_line_width(2)
         cr.rectangle(lx - 2, ly - 2, lw + 4, lh + 4)
         cr.stroke()
-        self._draw_status(cr, a, lx, ly, lw, lh)
         return False
 
-    def _draw_status(self, cr, a, lx, ly, lw, lh):
-        text = self.controller.status_text()
-        too_fast = self.controller.too_fast
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL,
-                            cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(15)
-        ext = cr.text_extents(text)
-        pad = 12
-        bw, bh = ext.width + 2 * pad, ext.height + 2 * pad
-        bx = lx + (lw - bw) / 2                   # centered on the region
-        # Place the pill in the dim band below the region, else above it.
-        if ly + lh + 16 + bh < a.height:
-            by = ly + lh + 16
-        elif ly - 16 - bh > 0:
-            by = ly - 16 - bh
-        else:
-            by = 16
+
+class _ControlBar(Gtk.Window):
+    """Always-visible, clickable control with Done/Cancel + status. A NORMAL
+    layer-shell window (not click-through) with EXCLUSIVE keyboard, so Esc, Enter
+    and the buttons always work — there is always a way out."""
+
+    def __init__(self, controller, gdk_monitor=None, anchor_top=False):
+        super().__init__()
+        self.controller = controller
+        GtkLayerShell.init_for_window(self)
+        if gdk_monitor is not None:
+            GtkLayerShell.set_monitor(self, gdk_monitor)
+        GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+        # Sit clear of the capture region: above it if the region reaches the
+        # bottom of its screen, otherwise below it.
+        edge = GtkLayerShell.Edge.TOP if anchor_top else GtkLayerShell.Edge.BOTTOM
+        GtkLayerShell.set_anchor(self, edge, True)
+        GtkLayerShell.set_margin(self, edge, 40)
+        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box.set_margin_top(10); box.set_margin_bottom(10)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.get_style_context().add_class("scroll-bar")
+        self.add(box)
+        self.status = Gtk.Label(label="Scroll down slowly…  0 frames")
+        box.pack_start(self.status, False, False, 0)
+        self.done = Gtk.Button(label="Done (↵)")
+        self.done.connect("clicked", lambda _b: self.controller.finish())
+        box.pack_start(self.done, False, False, 0)
+        cancel = Gtk.Button(label="Cancel (Esc)")
+        cancel.connect("clicked", lambda _b: self.controller.cancel())
+        box.pack_start(cancel, False, False, 0)
+        self.connect("key-press-event", self._on_key)
+
+    def _on_key(self, _w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            self.controller.cancel()
+        elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self.controller.finish()
+        return True
+
+    def set_status(self, text, too_fast=False):
         if too_fast:
-            cr.set_source_rgba(0.55, 0.10, 0.10, 0.92)
+            self.status.set_markup(
+                "<span foreground='#ff5c5c'><b>" + text + "</b></span>")
+            self.done.set_sensitive(False)
         else:
-            cr.set_source_rgba(0, 0, 0, 0.85)
-        _MonitorOverlay._round_rect(cr, bx, by, bw, bh, 9)
-        cr.fill()
-        cr.set_source_rgb(1, 1, 1)
-        cr.move_to(bx + pad, by + pad + ext.height)
-        cr.show_text(text)
+            self.status.set_text(text)
 
 
 class ScrollCapture:
-    """Manual-scroll capture. Dim everything except the region, grab frames of
-    the region on a background thread while the user scrolls down, and stitch
-    them. Up-scroll frames are ignored; scrolling too fast (a downward gap with
-    no overlap) is flagged and requires a cancel + retry. Returns [] if
-    cancelled or too fast."""
+    """Manual-scroll capture. Dim everything except the region (click-through,
+    visual only); an always-clickable control bar drives Done/Cancel. Frames are
+    grabbed on a background thread while scrolling down; the control bar is
+    hidden only for the instant of each grab so it isn't captured. Up-scroll is
+    ignored; a downward gap (scrolled too fast) is flagged and requires retry.
+    A watchdog auto-cancels after WATCHDOG_S so the user can never be trapped."""
+
+    WATCHDOG_S = 180
 
     def __init__(self, region, monitors, capture_mod):
         self.region = region
@@ -616,47 +625,53 @@ class ScrollCapture:
         self.too_fast = False
         self._thread = None
         self.dims = []
+        self.ctrl = None
 
-    def status_text(self):
+    def _update_status(self):
         if self.too_fast:
-            return "Too fast — press Esc and retry, scrolling slower"
-        return f"Scroll down slowly   ·   {len(self.frames)} frames   ·   ↵ done   ·   Esc cancel"
-
-    def _redraw(self):
-        for d in self.dims:
-            d.area.queue_draw()
+            self.ctrl.set_status("Too fast — press Esc / Cancel and retry slower",
+                                 too_fast=True)
+        else:
+            self.ctrl.set_status(
+                f"Scroll down slowly…  {len(self.frames)} frames")
         return False
+
+    def _grab_region(self):
+        """Grab the desktop and crop to the region. The control bar stays
+        visible (positioned off the region) so it's always responsive."""
+        from PIL import Image
+        try:
+            shot = self._capture.full()
+            full = Image.open(shot).convert("RGB")
+            x, y, w, h = self.region
+            return full.crop((max(0, x), max(0, y),
+                              min(x + w, full.width), min(y + h, full.height)))
+        except Exception:
+            return None
 
     def _worker(self):
         import time
-        from PIL import Image
         from . import scroll as _scroll
-        x, y, w, h = self.region
         last_kept = None
         while self._running:
-            try:
-                shot = self._capture.full()
-                full = Image.open(shot).convert("RGB")
-                frame = full.crop((max(0, x), max(0, y),
-                                   min(x + w, full.width), min(y + h, full.height)))
-            except Exception:
-                time.sleep(0.1)
-                continue
+            frame = self._grab_region()
+            if frame is None:
+                time.sleep(0.1); continue
             if last_kept is None:
                 self.frames.append(frame); last_kept = frame
-                GLib.idle_add(self._redraw)
+                GLib.idle_add(self._update_status)
             elif _scroll.changed(last_kept, frame):
-                down_s, down_e = _scroll.detect_overlap(last_kept, frame)
-                up_s, up_e = _scroll.detect_overlap(frame, last_kept)
-                if _scroll.is_confident(down_e) and down_e <= up_e and down_s >= 4:
+                d_s, d_e = _scroll.detect_overlap(last_kept, frame)
+                u_s, u_e = _scroll.detect_overlap(frame, last_kept)
+                if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
                     self.frames.append(frame); last_kept = frame
-                    GLib.idle_add(self._redraw)
-                elif _scroll.is_confident(up_e):
-                    pass            # scrolled back up — ignore, keep continuity
+                    GLib.idle_add(self._update_status)
+                elif _scroll.is_confident(u_e):
+                    pass                       # scrolled up — ignore
                 else:
                     self.too_fast = True
-                    GLib.idle_add(self._redraw)
-            time.sleep(0.12)
+                    GLib.idle_add(self._update_status)
+            time.sleep(0.18)
 
     def finish(self):
         self._running = False
@@ -670,17 +685,32 @@ class ScrollCapture:
     def _teardown(self):
         for d in self.dims:
             d.destroy()
+        if self.ctrl is not None:
+            self.ctrl.destroy()
         GLib.idle_add(Gtk.main_quit)
 
     def run(self):
         import threading
         display = Gdk.Display.get_default()
-        for i, m in enumerate(self.monitors):
+        for m in self.monitors:
             gm = display.get_monitor(m.index)
-            d = _DimWindow(self, m, gm, self.region, keyboard=(i == 0))
+            d = _DimWindow(m, gm, self.region)
             self.dims.append(d)
             d.show_all()
+        # Put the control bar on the region's monitor, clear of the region:
+        # below it if there's room, otherwise above it.
+        rx, ry, rw, rh = self.region
+        cx, cy = rx + rw / 2, ry + rh / 2
+        host = next((m for m in self.monitors
+                     if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
+                    self.monitors[0])
+        room_below = (host.y + host.height) - (ry + rh)
+        anchor_top = room_below < 120
+        self.ctrl = _ControlBar(self, display.get_monitor(host.index), anchor_top)
+        self.ctrl.show_all()
         self._running = True
+        # Last-resort escape: never let the capture trap the user.
+        GLib.timeout_add_seconds(self.WATCHDOG_S, self._watchdog)
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
         Gtk.main()
@@ -689,6 +719,13 @@ class ScrollCapture:
         if self._cancelled or self.too_fast:
             return []
         return self.frames
+
+    def _watchdog(self):
+        if self._running:
+            self._cancelled = True
+            self._running = False
+            self._teardown()
+        return False
 
 
 class ScreenPicker:
