@@ -11,6 +11,9 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
+# Red ⏹ stop button shown in the panel while a recording is in progress.
+STOP_ICON_NAME = "cosmicshot-stop"
+STOP_ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot-stop.png")
 
 
 def icon_path():

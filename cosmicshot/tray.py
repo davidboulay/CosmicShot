@@ -120,16 +120,21 @@ def _apply_state(ind):
     if recording:
         ind.set_menu(_build_recording_menu())
         try:
-            ind.set_label("● REC", "● REC")
+            ind.set_label("REC", "REC")
         except Exception:
             pass
-        ind.set_icon_full("media-record", "Recording")
+        # Red ⏹ stop button (bundled icon, resolved via the theme search path).
+        if os.path.exists(config.STOP_ICON_FILE):
+            ind.set_icon_theme_path(os.path.dirname(config.STOP_ICON_FILE))
+        ind.set_icon_full(config.STOP_ICON_NAME, "Stop recording")
     else:
         ind.set_menu(_build_menu())
         try:
             ind.set_label("", "")
         except Exception:
             pass
+        if os.path.exists(config.ICON_FILE):
+            ind.set_icon_theme_path(os.path.dirname(config.ICON_FILE))
         ind.set_icon_full(config.APP_ID, config.APP_NAME)
     return False  # for GLib.unix_signal_add (stay registered via re-add below)
 
