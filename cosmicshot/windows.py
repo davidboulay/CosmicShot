@@ -84,8 +84,11 @@ def available() -> bool:
 
 
 def list_windows(timeout: float = 6.0):
-    """Return a list of {x, y, w, h, app_id, title} for open windows in global
-    pixel space, largest first. Empty list if unavailable."""
+    """Return visible windows as {x, y, w, h, app_id, title, active} in global
+    pixel space, ordered bottom-to-top (the helper emits z-order; the topmost
+    window is last). Minimized windows are dropped — they aren't on screen.
+    Order is preserved so the picker can select the front-most window at a point.
+    Empty list if unavailable."""
     binary = _build()
     if binary is None:
         return []
@@ -95,6 +98,5 @@ def list_windows(timeout: float = 6.0):
         wins = json.loads(out or "[]")
     except (subprocess.SubprocessError, OSError, ValueError):
         return []
-    wins = [w for w in wins if w.get("w", 0) > 0 and w.get("h", 0) > 0]
-    wins.sort(key=lambda w: w["w"] * w["h"], reverse=True)
-    return wins
+    return [w for w in wins
+            if w.get("w", 0) > 0 and w.get("h", 0) > 0 and not w.get("minimized")]

@@ -20,6 +20,7 @@ struct win {
     struct zcosmic_toplevel_handle_v1 *cos;
     struct wl_output *geo_output;
     int x, y, w, h, have_geo;
+    int minimized, active;
     char app_id[256], title[512];
 };
 
@@ -63,7 +64,15 @@ static void cos_title(void*d,struct zcosmic_toplevel_handle_v1*c,const char*t){(
 static void cos_app_id(void*d,struct zcosmic_toplevel_handle_v1*c,const char*a){(void)d;(void)c;(void)a;}
 static void cos_output_enter(void*d,struct zcosmic_toplevel_handle_v1*c,struct wl_output*o){(void)d;(void)c;(void)o;}
 static void cos_output_leave(void*d,struct zcosmic_toplevel_handle_v1*c,struct wl_output*o){(void)d;(void)c;(void)o;}
-static void cos_state(void*d,struct zcosmic_toplevel_handle_v1*c,struct wl_array*s){(void)d;(void)c;(void)s;}
+static void cos_state(void*d,struct zcosmic_toplevel_handle_v1*c,struct wl_array*s){
+    (void)d; struct win*win=win_for_cos(c); if(!win) return;
+    win->minimized=0; win->active=0;
+    uint32_t *v;
+    for(v=s->data; (char*)v < (char*)s->data + s->size; v++){
+        if(*v==1) win->minimized=1;      /* state enum: 1=minimized, 2=activated */
+        else if(*v==2) win->active=1;
+    }
+}
 /* Workspace events are unused but MUST be present so event opcodes line up with
  * the v3 protocol (geometry is opcode 9, after the workspace events). */
 struct zcosmic_workspace_handle_v1; struct ext_workspace_handle_v1;
@@ -166,7 +175,8 @@ int main(void){
         int gx=w->x+out_x(w->geo_output), gy=w->y+out_y(w->geo_output);
         if(!first) printf(",");
         first=0;
-        printf("{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"app_id\":",gx,gy,w->w,w->h);
+        printf("{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"minimized\":%s,\"active\":%s,\"app_id\":",
+               gx,gy,w->w,w->h, w->minimized?"true":"false", w->active?"true":"false");
         jputs(w->app_id); printf(",\"title\":"); jputs(w->title); printf("}");
     }
     printf("]\n");
