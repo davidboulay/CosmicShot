@@ -40,6 +40,22 @@ if [ ${#win_missing[@]} -ne 0 ]; then
     echo
 fi
 
+# Optional: video recording uses the ScreenCast portal + GStreamer (PipeWire
+# source + an H.264 encoder + mp4 mux).
+rec_missing=()
+python3 -c "import gi; gi.require_version('Gst','1.0')" 2>/dev/null || rec_missing+=("python3-gst-1.0")
+gst-inspect-1.0 pipewiresrc >/dev/null 2>&1 || rec_missing+=("gstreamer1.0-pipewire")
+gst-inspect-1.0 videocrop >/dev/null 2>&1 || rec_missing+=("gstreamer1.0-plugins-good")
+{ gst-inspect-1.0 vah264enc >/dev/null 2>&1 || gst-inspect-1.0 openh264enc >/dev/null 2>&1 \
+    || gst-inspect-1.0 x264enc >/dev/null 2>&1; } || rec_missing+=("an H.264 encoder (gstreamer1.0-vaapi or gstreamer1.0-plugins-bad)")
+if [ ${#rec_missing[@]} -ne 0 ]; then
+    echo "NOTE: video recording (Record …) needs:"
+    printf '  - %s\n' "${rec_missing[@]}"
+    echo "  sudo apt install python3-gst-1.0 gstreamer1.0-pipewire \\"
+    echo "      gstreamer1.0-plugins-good gstreamer1.0-vaapi gstreamer1.0-plugins-bad"
+    echo
+fi
+
 # --- copy package ---
 mkdir -p "$DEST" "$BIN" "$APPS"
 rm -rf "$DEST/cosmicshot"

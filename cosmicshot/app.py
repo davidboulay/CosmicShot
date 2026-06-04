@@ -17,6 +17,9 @@ def _set_branding():
     """Set the Wayland app_id and default window icon so the dock/tray and
     notifications show the CosmicShot icon instead of a generic placeholder."""
     try:
+        import gi
+        gi.require_version("Gtk", "3.0")        # else the unversioned import
+        gi.require_version("Gdk", "3.0")        # grabs GTK4 and clashes
         from gi.repository import GLib, Gtk
         GLib.set_prgname(config.APP_ID)         # Wayland app_id -> matches .desktop
         try:
@@ -164,6 +167,27 @@ def mode_scroll(cfg, target="region"):
     _run_editor(stitched.convert("RGBA"), cfg)
 
 
+def mode_record(cfg, target="region"):
+    """Record video of a region / app window / whole screen to an mp4 via the
+    ScreenCast portal. The portal natively picks the window or monitor; region
+    additionally crops to the selected rectangle. After recording you preview
+    the clip and choose Save or Discard."""
+    region = None
+    if target == "region":
+        region = _pick_rect("region")
+        if not region:
+            return  # cancelled before recording
+    save_dir = cfg.get("save_dir") or os.path.join(os.path.expanduser("~"), "Videos")
+    monitors = capture.list_monitors()
+    from .record import RecordingSession
+    sess = RecordingSession(target, save_dir, region=region, monitors=monitors)
+    saved = sess.run()
+    if saved and os.path.exists(saved):
+        export.notify("Recording saved", sess.error or saved, saved)
+    elif sess.error:
+        export.notify("CosmicShot — recording failed", sess.error)
+
+
 def mode_open(cfg, path):
     img = Image.open(path).convert("RGBA")
     _run_editor(img, cfg)
@@ -176,30 +200,54 @@ def main(argv=None):
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
     p.add_argument("mode", nargs="?", default="region",
                    choices=["region", "full", "screen", "window", "scroll",
-                            "open", "tray"],
+                            "record", "open", "tray", "settings"],
                    help="region (default): drag-select then edit; "
                         "screen/full: pick a whole screen; window: pick an app "
                         "window; scroll: scrolling screenshot (--target); "
+                        "record: record video (--target); "
                         "open: edit an existing image (give --file); "
                         "tray: run the panel tray icon.")
     p.add_argument("--target", default="region",
                    choices=["region", "screen", "window"],
-                   help="what to capture in 'scroll' mode (default: region)")
+                   help="what to capture in 'scroll'/'record' mode (default: region)")
+    p.add_argument("--stop", action="store_true",
+                   help="stop the recording in progress (e.g. bind a hotkey to "
+                        "'cosmicshot record --stop' to stop a full-screen recording)")
     p.add_argument("--file", help="image path for 'open' mode")
     args = p.parse_args(argv)
 
     _set_branding()
     cfg = config.load()
 
+    # Stop a recording in progress (works without a tray — bind a hotkey to it).
+    if args.mode == "record" and args.stop:
+        from . import lock
+        import signal
+        pid = lock.recording_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+            except OSError:
+                pass
+        else:
+            export.notify("CosmicShot", "No recording is in progress.")
+        return 0
+
     # 'tray' is the background app and must not take the capture lock.
     if args.mode == "tray":
         from . import tray
         return tray.run_tray(cfg) or 0
 
+    # Settings is a normal window, not a capture — no lock needed.
+    if args.mode == "settings":
+        from .settings import SettingsWindow
+        SettingsWindow(cfg).run()
+        return 0
+
     # Launched from the panel menu? The COSMIC panel keeps its tray menu open
     # after a click, so dismiss it before grabbing or it lands in the shot.
     if os.environ.get("COSMICSHOT_FROM_TRAY") and args.mode in (
-            "region", "full", "screen", "window", "scroll"):
+            "region", "full", "screen", "window", "scroll", "record"):
         try:
             from . import overlay
             overlay.dismiss_popups()
@@ -231,6 +279,8 @@ def main(argv=None):
             mode_window(cfg)
         elif args.mode == "scroll":
             mode_scroll(cfg, args.target)
+        elif args.mode == "record":
+            mode_record(cfg, args.target)
         elif args.mode == "open":
             if not args.file:
                 p.error("open mode requires --file PATH")
@@ -240,6 +290,8 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 1
     except Exception as e:  # surface failures to the user
+        import traceback
+        traceback.print_exc()
         export.notify("CosmicShot error", str(e))
         print(f"error: {e}", file=sys.stderr)
         return 1

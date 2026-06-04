@@ -32,6 +32,10 @@ MENU = [
     ("Capture App Window…", ["window"]),
     ("Scrolling Screenshot (Region)…", ["scroll", "--target", "region"]),
     ("Scrolling Screenshot (App Window)…", ["scroll", "--target", "window"]),
+    None,  # separator
+    ("Record Region…", ["record", "--target", "region"]),
+    ("Record App Window…", ["record", "--target", "window"]),
+    ("Record Screen…", ["record", "--target", "screen"]),
 ]
 
 
@@ -66,16 +70,78 @@ def _on_activate(item, args):
 
 def _build_menu():
     menu = Gtk.Menu()
-    for label, args in MENU:
+    for entry in MENU:
+        if entry is None:
+            menu.append(Gtk.SeparatorMenuItem())
+            continue
+        label, args = entry
         item = Gtk.MenuItem(label=label)
         item.connect("activate", lambda w, a=args: _on_activate(w, a))
         menu.append(item)
+    menu.append(Gtk.SeparatorMenuItem())
+    settings_item = Gtk.MenuItem(label="Settings…")
+    # Settings is a window, not a capture — launch it directly (no menu-dismiss
+    # dance needed).
+    settings_item.connect("activate",
+                          lambda *_: GLib.idle_add(lambda: (_launch(["settings"]), False)[1]))
+    menu.append(settings_item)
+    quit_item = Gtk.MenuItem(label="Quit CosmicShot")
+    quit_item.connect("activate", lambda *_: Gtk.main_quit())
+    menu.append(quit_item)
+    menu.show_all()
+    return menu
+
+
+def _stop_recording(*_):
+    """Tell the active recording (full-screen) to stop and save."""
+    import signal
+    from . import lock
+    pid = lock.recording_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGUSR1)
+        except OSError:
+            pass
+
+
+def _build_recording_menu():
+    menu = Gtk.Menu()
+    stop = Gtk.MenuItem(label="⏹  Stop recording")
+    stop.connect("activate", _stop_recording)
+    menu.append(stop)
     menu.append(Gtk.SeparatorMenuItem())
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
     quit_item.connect("activate", lambda *_: Gtk.main_quit())
     menu.append(quit_item)
     menu.show_all()
     return menu
+
+
+def _apply_state(ind):
+    """Reflect whether a recording is in progress in the panel: a red Stop
+    menu + "REC" label while recording, the normal capture menu otherwise."""
+    from . import lock
+    recording = lock.recording_pid() is not None
+    if recording:
+        ind.set_menu(_build_recording_menu())
+        try:
+            ind.set_label("REC", "REC")
+        except Exception:
+            pass
+        # Red ⏹ stop button (bundled icon, resolved via the theme search path).
+        if os.path.exists(config.STOP_ICON_FILE):
+            ind.set_icon_theme_path(os.path.dirname(config.STOP_ICON_FILE))
+        ind.set_icon_full(config.STOP_ICON_NAME, "Stop recording")
+    else:
+        ind.set_menu(_build_menu())
+        try:
+            ind.set_label("", "")
+        except Exception:
+            pass
+        if os.path.exists(config.ICON_FILE):
+            ind.set_icon_theme_path(os.path.dirname(config.ICON_FILE))
+        ind.set_icon_full(config.APP_ID, config.APP_NAME)
+    return False  # for GLib.unix_signal_add (stay registered via re-add below)
 
 
 def run_tray(cfg=None):
@@ -102,4 +168,42 @@ def run_tray(cfg=None):
         ind.set_icon_theme_path(os.path.dirname(config.ICON_FILE))
     ind.set_icon_full(config.APP_ID, config.APP_NAME)
     ind.set_menu(_build_menu())
+
+    # Let a full-screen recording hand its Stop button to the panel: publish our
+    # PID and refresh the menu/icon whenever a recording signals us (SIGUSR1).
+    import signal
+    from . import lock
+    lock.write_tray_pid()
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                         lambda: (_apply_state(ind), True)[1])
+    _apply_state(ind)  # in case a recording is already running
+
+    # Auto-update: check shortly after launch, then periodically, and notify
+    # (only when enabled in Settings). The install itself is one-click in
+    # Settings → "Update now".
+    GLib.timeout_add_seconds(10, lambda: (_check_updates(), False)[1])
+    GLib.timeout_add_seconds(6 * 3600, lambda: (_check_updates(), True)[1])
+
     Gtk.main()
+
+
+def _check_updates():
+    """If auto-update is on, check GitHub in the background and notify when a
+    newer release is available."""
+    if not config.load().get("auto_update"):
+        return
+    import threading
+
+    def work():
+        try:
+            from . import updates, export
+            info = updates.available()
+        except Exception:
+            return
+        if info:
+            GLib.idle_add(lambda: (export.notify(
+                "CosmicShot update available",
+                f"Version {info['version']} is available — open Settings to update."),
+                False)[1])
+
+    threading.Thread(target=work, daemon=True).start()
