@@ -864,7 +864,13 @@ class ScrollCapture:
         # While scrolling up, the primary button is "Reset" (restart capture at
         # the current position); otherwise it's "Done" (finish).
         if self._warn == "up":
+            # Instant feedback on the click; the worker rebuilds the base.
+            self._warn = None
+            self.frames = []
             self._do_reset = True
+            if self.ctrl:
+                self.ctrl.set_primary_label("Done (↵)")
+                self.ctrl.set_status("Restarting here…")
         else:
             self.finish()
 
@@ -893,8 +899,8 @@ class ScrollCapture:
         import time
         ev = _t.Event()
         GLib.idle_add(lambda: (self.ctrl.hide(), ev.set(), False)[2])
-        ev.wait(0.3)
-        time.sleep(0.04)
+        ev.wait(0.15)
+        time.sleep(0.02)
         frame = self._grab_region()
         GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
         return frame
@@ -933,12 +939,17 @@ class ScrollCapture:
                     time.sleep(0.05); continue
 
                 # Instantaneous direction, measured against the previous grab.
+                # DOWN takes priority: if the down-overlap is confident it's a
+                # down-scroll, full stop. Only call it "up" when down clearly
+                # does NOT match — this avoids false "up" on uniform/whitespace
+                # areas where both directions match by coincidence.
                 going_up = going_down = False
                 if prev is not None and _scroll.changed(prev, frame):
                     dd_s, dd_e = _scroll.detect_overlap(prev, frame)   # down
-                    uu_s, uu_e = _scroll.detect_overlap(frame, prev)   # up
-                    going_down = _scroll.is_confident(dd_e) and dd_s >= 4 and dd_e <= uu_e
-                    going_up = _scroll.is_confident(uu_e) and uu_s >= 4 and uu_e < dd_e
+                    going_down = _scroll.is_confident(dd_e) and dd_s >= 4
+                    if not going_down:
+                        uu_s, uu_e = _scroll.detect_overlap(frame, prev)   # up
+                        going_up = _scroll.is_confident(uu_e) and uu_s >= 4
 
                 if going_up:
                     # Wrong direction: warn and offer Reset. If they instead
