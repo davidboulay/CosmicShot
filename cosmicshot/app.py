@@ -114,6 +114,48 @@ def mode_window(cfg):
     _run_editor(img, cfg)
 
 
+def _pick_rect(target):
+    """Return a global (x,y,w,h) rect for a scroll/record target, or None."""
+    monitors = capture.list_monitors()
+    shot_path = capture.full()
+    from . import overlay
+    if target == "screen":
+        m = overlay.ScreenPicker(shot_path, monitors).run()
+        if m is None:
+            return None
+        x0, y0, x1, y1 = m.bounds
+        return (x0, y0, x1 - x0, y1 - y0)
+    if target == "window":
+        from . import windows
+        wins = windows.list_windows()
+        if not wins:
+            return None
+        return overlay.WindowPicker(shot_path, monitors, wins).run()
+    # region (default): drag-select
+    rect = overlay.SelectionOverlay(shot_path, monitors).run()
+    return rect
+
+
+def mode_scroll(cfg, target="region"):
+    """Scrolling screenshot: pick a target, then capture frames while the user
+    scrolls and stitch them into one tall image."""
+    rect = _pick_rect(target)
+    if not rect:
+        return  # cancelled
+    from . import overlay, scroll
+    frames = overlay.ScrollCapture(rect, capture).run()
+    if not frames:
+        return  # cancelled / nothing captured
+    stitched = scroll.stitch(frames)
+    if stitched is None:
+        return
+    if cfg.get("auto_copy_on_capture"):
+        from .imaging import pil_to_surface
+        surf, _buf = pil_to_surface(stitched.convert("RGBA"))
+        export.copy_to_clipboard(surf)
+    _run_editor(stitched.convert("RGBA"), cfg)
+
+
 def mode_open(cfg, path):
     img = Image.open(path).convert("RGBA")
     _run_editor(img, cfg)
@@ -125,11 +167,16 @@ def main(argv=None):
         prog="cosmicshot",
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
     p.add_argument("mode", nargs="?", default="region",
-                   choices=["region", "full", "screen", "window", "open", "tray"],
+                   choices=["region", "full", "screen", "window", "scroll",
+                            "open", "tray"],
                    help="region (default): drag-select then edit; "
-                        "screen/full: pick a whole screen; window: COSMIC picker; "
+                        "screen/full: pick a whole screen; window: pick an app "
+                        "window; scroll: scrolling screenshot (--target); "
                         "open: edit an existing image (give --file); "
                         "tray: run the panel tray icon.")
+    p.add_argument("--target", default="region",
+                   choices=["region", "screen", "window"],
+                   help="what to capture in 'scroll' mode (default: region)")
     p.add_argument("--file", help="image path for 'open' mode")
     args = p.parse_args(argv)
 
@@ -164,6 +211,8 @@ def main(argv=None):
             mode_full(cfg)
         elif args.mode == "window":
             mode_window(cfg)
+        elif args.mode == "scroll":
+            mode_scroll(cfg, args.target)
         elif args.mode == "open":
             if not args.file:
                 p.error("open mode requires --file PATH")
