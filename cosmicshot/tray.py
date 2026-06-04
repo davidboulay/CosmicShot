@@ -79,6 +79,12 @@ def _build_menu():
         item.connect("activate", lambda w, a=args: _on_activate(w, a))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
+    settings_item = Gtk.MenuItem(label="Settings…")
+    # Settings is a window, not a capture — launch it directly (no menu-dismiss
+    # dance needed).
+    settings_item.connect("activate",
+                          lambda *_: GLib.idle_add(lambda: (_launch(["settings"]), False)[1]))
+    menu.append(settings_item)
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
     quit_item.connect("activate", lambda *_: Gtk.main_quit())
     menu.append(quit_item)
@@ -172,4 +178,32 @@ def run_tray(cfg=None):
                          lambda: (_apply_state(ind), True)[1])
     _apply_state(ind)  # in case a recording is already running
 
+    # Auto-update: check shortly after launch, then periodically, and notify
+    # (only when enabled in Settings). The install itself is one-click in
+    # Settings → "Update now".
+    GLib.timeout_add_seconds(10, lambda: (_check_updates(), False)[1])
+    GLib.timeout_add_seconds(6 * 3600, lambda: (_check_updates(), True)[1])
+
     Gtk.main()
+
+
+def _check_updates():
+    """If auto-update is on, check GitHub in the background and notify when a
+    newer release is available."""
+    if not config.load().get("auto_update"):
+        return
+    import threading
+
+    def work():
+        try:
+            from . import updates, export
+            info = updates.available()
+        except Exception:
+            return
+        if info:
+            GLib.idle_add(lambda: (export.notify(
+                "CosmicShot update available",
+                f"Version {info['version']} is available — open Settings to update."),
+                False)[1])
+
+    threading.Thread(target=work, daemon=True).start()

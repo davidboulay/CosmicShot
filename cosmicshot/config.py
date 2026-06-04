@@ -10,6 +10,8 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
+VERSION = "1.0.0"                       # bump on each release (matches the git tag)
+GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.
 STOP_ICON_NAME = "cosmicshot-stop"
@@ -64,7 +66,23 @@ DEFAULTS = {
     "upload_field": "fileToUpload",
     "upload_extra": {"reqtype": "fileupload"},
     "upload_expires": None,   # optional retention in hours (host-dependent)
+    # Updates: check GitHub Releases on launch + periodically, notify, and offer
+    # one-click install of the .deb (pkexec).
+    "auto_update": False,
+    # Global keyboard shortcuts written into COSMIC's custom-shortcuts config.
+    # Maps an action id -> accelerator string like "Super+Shift+S" ("" = unset).
+    # Empty by default; set them in Settings.
+    "shortcuts": {},
 }
+
+# Actions that can be bound to a global shortcut (id -> (label, command)).
+SHORTCUT_ACTIONS = [
+    ("region", "Capture Region", "cosmicshot region"),
+    ("screen", "Capture Screen", "cosmicshot screen"),
+    ("window", "Capture App Window", "cosmicshot window"),
+    ("scroll_region", "Scrolling Screenshot (Region)", "cosmicshot scroll --target region"),
+    ("scroll_window", "Scrolling Screenshot (App Window)", "cosmicshot scroll --target window"),
+]
 
 
 def load():

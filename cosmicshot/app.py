@@ -200,7 +200,7 @@ def main(argv=None):
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
     p.add_argument("mode", nargs="?", default="region",
                    choices=["region", "full", "screen", "window", "scroll",
-                            "record", "open", "tray"],
+                            "record", "open", "tray", "settings"],
                    help="region (default): drag-select then edit; "
                         "screen/full: pick a whole screen; window: pick an app "
                         "window; scroll: scrolling screenshot (--target); "
@@ -237,6 +237,12 @@ def main(argv=None):
     if args.mode == "tray":
         from . import tray
         return tray.run_tray(cfg) or 0
+
+    # Settings is a normal window, not a capture — no lock needed.
+    if args.mode == "settings":
+        from .settings import SettingsWindow
+        SettingsWindow(cfg).run()
+        return 0
 
     # Launched from the panel menu? The COSMIC panel keeps its tray menu open
     # after a click, so dismiss it before grabbing or it lands in the shot.
