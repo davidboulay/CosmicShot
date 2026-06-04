@@ -605,13 +605,167 @@ class _ControlBar(Gtk.Window):
             self.status.set_text(text)
 
 
+class AutoScrollCapture:
+    """Hands-free scrolling capture. Dims everything except the region, then a
+    virtual mouse (uinput) scrolls the window under the pointer ITSELF: first up
+    to the top, then down in controlled steps, grabbing and stitching as it
+    goes. The user doesn't scroll (and shouldn't); Esc / Cancel aborts at any
+    time and a watchdog is a final backstop. Returns frames to stitch, or []."""
+
+    WATCHDOG_S = 180
+    MAX_FRAMES = 300
+
+    def __init__(self, region, monitors, capture_mod):
+        self.region = region
+        self.monitors = monitors
+        self._capture = capture_mod
+        self.frames = []
+        self._running = False
+        self._cancelled = False
+        self.too_fast = False          # never happens here (we control the step)
+        self._thread = None
+        self.dims = []
+        self.ctrl = None
+
+    def _status(self, text):
+        if self.ctrl:
+            self.ctrl.set_status(text)
+        return False
+
+    def _grab(self):
+        from PIL import Image
+        try:
+            shot = self._capture.full()
+            full = Image.open(shot).convert("RGB")
+            x, y, w, h = self.region
+            return full.crop((max(0, x), max(0, y),
+                              min(x + w, full.width), min(y + h, full.height)))
+        except Exception:
+            return None
+
+    def _worker(self):
+        import time
+        from . import inject, scroll as _scroll
+        vh = self.region[3]
+        try:
+            scroller = inject.Scroller()
+        except Exception:
+            self._cancelled = True
+            GLib.idle_add(self._teardown)
+            return
+
+        # Phase 1: rewind to the top so we always start from the beginning.
+        GLib.idle_add(self._status, "Rewinding to top…")
+        prev = self._grab()
+        stable = 0
+        for _ in range(400):
+            if not self._running:
+                break
+            scroller.scroll(8)          # positive = up
+            time.sleep(0.16)
+            cur = self._grab()
+            if cur is None:
+                continue
+            if prev is not None and not _scroll.changed(prev, cur):
+                stable += 1
+                if stable >= 2:
+                    break               # reached the top
+            else:
+                stable = 0
+            prev = cur
+
+        # Phase 2: capture downward in controlled steps (guaranteed overlap).
+        self.frames = []
+        last = self._grab()
+        if last is not None:
+            self.frames.append(last)
+        GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
+        ticks, nochange = 3, 0
+        while self._running and len(self.frames) < self.MAX_FRAMES:
+            scroller.scroll_down(ticks)
+            time.sleep(0.25)            # let smooth-scroll settle before grabbing
+            cur = self._grab()
+            if cur is None:
+                continue
+            if not _scroll.changed(last, cur):
+                nochange += 1
+                if nochange >= 2:
+                    break               # reached the bottom
+                continue
+            nochange = 0
+            s, err = _scroll.detect_overlap(last, cur)
+            if _scroll.is_confident(err) and s >= 4:
+                self.frames.append(cur); last = cur
+                GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
+                if s < 0.35 * vh:
+                    ticks = min(ticks + 1, 12)   # speed up if steps are small
+                elif s > 0.6 * vh:
+                    ticks = max(1, ticks - 1)    # ease off if nearing no-overlap
+            else:
+                ticks = max(1, ticks - 1)        # animation/overshoot: slow down
+
+        scroller.close()
+        self._running = False
+        GLib.idle_add(self._teardown)
+
+    def finish(self):
+        self._running = False
+
+    def cancel(self):
+        self._cancelled = True
+        self._running = False
+
+    def _teardown(self):
+        for d in self.dims:
+            d.destroy()
+        if self.ctrl is not None:
+            self.ctrl.destroy()
+        Gtk.main_quit()
+        return False
+
+    def _watchdog(self):
+        if self._running:
+            self._cancelled = True
+            self._running = False
+            self._teardown()
+        return False
+
+    def run(self):
+        import threading
+        display = Gdk.Display.get_default()
+        for m in self.monitors:
+            gm = display.get_monitor(m.index)
+            d = _DimWindow(m, gm, self.region)
+            self.dims.append(d)
+            d.show_all()
+        rx, ry, rw, rh = self.region
+        cx, cy = rx + rw / 2, ry + rh / 2
+        host = next((m for m in self.monitors
+                     if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
+                    self.monitors[0])
+        anchor_top = (host.y + host.height) - (ry + rh) < 120
+        self.ctrl = _ControlBar(self, display.get_monitor(host.index), anchor_top)
+        self.ctrl.done.hide()           # auto-completes; only Cancel is needed
+        self.ctrl.set_status("Auto-scrolling…  Esc / Cancel to stop")
+        self.ctrl.show_all()
+        self.ctrl.done.hide()
+        self._running = True
+        GLib.timeout_add_seconds(self.WATCHDOG_S, self._watchdog)
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+        Gtk.main()
+        if self._thread:
+            self._thread.join(timeout=2)
+        return [] if self._cancelled else self.frames
+
+
 class ScrollCapture:
-    """Manual-scroll capture. Dim everything except the region (click-through,
-    visual only); an always-clickable control bar drives Done/Cancel. Frames are
-    grabbed on a background thread while scrolling down; the control bar is
-    hidden only for the instant of each grab so it isn't captured. Up-scroll is
-    ignored; a downward gap (scrolled too fast) is flagged and requires retry.
-    A watchdog auto-cancels after WATCHDOG_S so the user can never be trapped."""
+    """Manual-scroll capture (fallback when input injection is unavailable).
+    Dim everything except the region (click-through, visual only); an
+    always-clickable control bar drives Done/Cancel. Frames are grabbed on a
+    background thread while the user scrolls down; up-scroll is ignored; a
+    downward gap (scrolled too fast) is flagged and requires retry. A watchdog
+    auto-cancels after WATCHDOG_S so the user can never be trapped."""
 
     WATCHDOG_S = 180
 

@@ -142,11 +142,16 @@ def mode_scroll(cfg, target="region"):
     rect = _pick_rect(target)
     if not rect:
         return  # cancelled
-    from . import overlay, scroll
+    from . import inject, overlay, scroll
     monitors = capture.list_monitors()
-    sc = overlay.ScrollCapture(rect, monitors, capture)
+    # Auto-scroll (the app scrolls for you) when input injection works; else
+    # fall back to manual scrolling.
+    if inject.available():
+        sc = overlay.AutoScrollCapture(rect, monitors, capture)
+    else:
+        sc = overlay.ScrollCapture(rect, monitors, capture)
     frames = sc.run()
-    if sc.too_fast:
+    if getattr(sc, "too_fast", False):
         export.notify("CosmicShot", "Scrolled too fast — please retry, scrolling slowly.")
         return
     if not frames:
