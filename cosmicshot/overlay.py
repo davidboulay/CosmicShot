@@ -633,15 +633,27 @@ class AutoScrollCapture:
         return False
 
     def _grab(self):
+        # Hide the control bar for the instant of the grab so it's never in the
+        # frame (full-window regions leave nowhere to put it off-region). The
+        # bar is visible the rest of the time (scrolling/settling) so Stop/Esc
+        # stay responsive.
+        import threading as _t
+        import time
         from PIL import Image
+        ev = _t.Event()
+        GLib.idle_add(lambda: (self.ctrl.hide(), ev.set(), False)[2])
+        ev.wait(0.3)
+        time.sleep(0.05)
         try:
             shot = self._capture.full()
             full = Image.open(shot).convert("RGB")
             x, y, w, h = self.region
-            return full.crop((max(0, x), max(0, y),
-                              min(x + w, full.width), min(y + h, full.height)))
+            frame = full.crop((max(0, x), max(0, y),
+                               min(x + w, full.width), min(y + h, full.height)))
         except Exception:
-            return None
+            frame = None
+        GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
+        return frame
 
     def _worker(self):
         import time
@@ -683,7 +695,7 @@ class AutoScrollCapture:
         ticks, nochange = 3, 0
         while self._running and len(self.frames) < self.MAX_FRAMES:
             scroller.scroll_down(ticks)
-            time.sleep(0.25)            # let smooth-scroll settle before grabbing
+            time.sleep(0.38)            # let smooth-scroll settle before grabbing
             cur = self._grab()
             if cur is None:
                 continue
@@ -745,10 +757,10 @@ class AutoScrollCapture:
                     self.monitors[0])
         anchor_top = (host.y + host.height) - (ry + rh) < 120
         self.ctrl = _ControlBar(self, display.get_monitor(host.index), anchor_top)
-        self.ctrl.done.hide()           # auto-completes; only Cancel is needed
-        self.ctrl.set_status("Auto-scrolling…  Esc / Cancel to stop")
+        # "Stop & Save" ends the auto-scroll early and keeps what's captured.
+        self.ctrl.done.set_label("Stop & Save")
+        self.ctrl.set_status("Auto-scrolling…")
         self.ctrl.show_all()
-        self.ctrl.done.hide()
         self._running = True
         GLib.timeout_add_seconds(self.WATCHDOG_S, self._watchdog)
         self._thread = threading.Thread(target=self._worker, daemon=True)
