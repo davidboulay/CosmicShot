@@ -74,6 +74,9 @@ class Editor(Gtk.Window):
         self.blur_block = int(self.cfg.get("pixelate_block", 12))
         self.spotlight_darkness = float(self.cfg.get("spotlight_darkness", 0.6))
 
+        self._zoom = 1.0          # 1.0 = fit-to-window; >1 zooms in
+        self._panx = 0.0          # extra pan offset (widget px) when zoomed
+        self._pany = 0.0
         self.draft = None        # in-progress annotation (live preview)
         self.press_img = None     # press point in image coords
         self.crop_rect = None     # (x, y, w, h) image coords while crop tool active
@@ -278,11 +281,13 @@ class Editor(Gtk.Window):
         self.canvas.add_events(
             Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
             | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_MOTION_MASK
-            | Gdk.EventMask.BUTTON1_MOTION_MASK)
+            | Gdk.EventMask.BUTTON1_MOTION_MASK | Gdk.EventMask.SCROLL_MASK
+            | Gdk.EventMask.SMOOTH_SCROLL_MASK)
         self.canvas.connect("draw", self.on_canvas_draw)
         self.canvas.connect("button-press-event", self.on_canvas_press)
         self.canvas.connect("button-release-event", self.on_canvas_release)
         self.canvas.connect("motion-notify-event", self.on_canvas_motion)
+        self.canvas.connect("scroll-event", self.on_canvas_scroll)
         self.canvas.connect("realize",
                              lambda *_: self._set_canvas_cursor(self._tool_cursor()))
 
@@ -362,13 +367,89 @@ class Editor(Gtk.Window):
         btn.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     # ----------------------------------------------------------- coord mapping
+    def _fit_scale(self):
+        a = self.canvas.get_allocation()
+        iw, ih = self.base_image.width, self.base_image.height
+        return min(a.width / iw, a.height / ih) if iw and ih else 1
+
     def _layout(self):
         a = self.canvas.get_allocation()
         iw, ih = self.base_image.width, self.base_image.height
-        scale = min(a.width / iw, a.height / ih) if iw and ih else 1
-        ox = (a.width - iw * scale) / 2
-        oy = (a.height - ih * scale) / 2
+        scale = self._fit_scale() * self._zoom
+        ox = (a.width - iw * scale) / 2 + self._panx
+        oy = (a.height - ih * scale) / 2 + self._pany
         return scale, ox, oy
+
+    def _clamp_pan(self):
+        """Keep the image from being panned entirely off-screen."""
+        a = self.canvas.get_allocation()
+        iw, ih = self.base_image.width, self.base_image.height
+        scale = self._fit_scale() * self._zoom
+        sw, sh = iw * scale, ih * scale
+        margin = 40
+        # When the scaled image is larger than the view, allow panning across it;
+        # otherwise keep it centered (pan 0).
+        if sw > a.width:
+            lim = (sw - a.width) / 2 + margin
+            self._panx = max(-lim, min(self._panx, lim))
+        else:
+            self._panx = 0.0
+        if sh > a.height:
+            lim = (sh - a.height) / 2 + margin
+            self._pany = max(-lim, min(self._pany, lim))
+        else:
+            self._pany = 0.0
+
+    def set_zoom(self, zoom, cx=None, cy=None):
+        """Zoom to `zoom` (clamped), keeping the point under (cx,cy) fixed."""
+        zoom = max(1.0, min(zoom, 8.0))
+        if cx is None:
+            a = self.canvas.get_allocation()
+            cx, cy = a.width / 2, a.height / 2
+        ix, iy = self.to_image(cx, cy)   # image point under the cursor (old layout)
+        self._zoom = zoom
+        scale, _, _ = self._layout()
+        a = self.canvas.get_allocation()
+        iw, ih = self.base_image.width, self.base_image.height
+        # Re-center so (ix,iy) stays under (cx,cy): solve for pan.
+        self._panx = cx - (a.width - iw * scale) / 2 - ix * scale
+        self._pany = cy - (a.height - ih * scale) / 2 - iy * scale
+        self._clamp_pan()
+        self.canvas.queue_draw()
+
+    def reset_zoom(self):
+        self._zoom = 1.0
+        self._panx = self._pany = 0.0
+        self.canvas.queue_draw()
+
+    def on_canvas_scroll(self, _w, ev):
+        # Ctrl+wheel zooms toward the cursor; plain wheel pans (great for tall
+        # scrolling screenshots); Shift+wheel pans horizontally.
+        dx, dy = 0.0, 0.0
+        if ev.direction == Gdk.ScrollDirection.SMOOTH:
+            _, sdx, sdy = ev.get_scroll_deltas()
+            dx, dy = sdx, sdy
+        elif ev.direction == Gdk.ScrollDirection.UP:
+            dy = -1
+        elif ev.direction == Gdk.ScrollDirection.DOWN:
+            dy = 1
+        elif ev.direction == Gdk.ScrollDirection.LEFT:
+            dx = -1
+        elif ev.direction == Gdk.ScrollDirection.RIGHT:
+            dx = 1
+        if ev.state & Gdk.ModifierType.CONTROL_MASK:
+            factor = 1.0 + (-dy) * 0.12
+            self.set_zoom(self._zoom * factor, ev.x, ev.y)
+        else:
+            step = 90
+            if ev.state & Gdk.ModifierType.SHIFT_MASK:
+                self._panx -= dy * step + dx * step
+            else:
+                self._pany -= dy * step
+                self._panx -= dx * step
+            self._clamp_pan()
+            self.canvas.queue_draw()
+        return True
 
     def to_image(self, wx, wy):
         scale, ox, oy = self._layout()
@@ -1049,6 +1130,13 @@ class Editor(Gtk.Window):
             return True
         if k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and self.crop_rect:
             self.apply_crop(); return True
+        # Zoom: Ctrl++ / Ctrl+- / Ctrl+0 (and bare +/- for convenience).
+        if k in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self.set_zoom(self._zoom * 1.25); return True
+        if k in (Gdk.KEY_minus, Gdk.KEY_underscore, Gdk.KEY_KP_Subtract):
+            self.set_zoom(self._zoom / 1.25); return True
+        if k in (Gdk.KEY_0, Gdk.KEY_KP_0) and ctrl:
+            self.reset_zoom(); return True
         if k in (Gdk.KEY_Delete, Gdk.KEY_BackSpace) and self.selected is not None:
             self.delete_selected(); return True
         if ctrl and k in (Gdk.KEY_z, Gdk.KEY_Z):
