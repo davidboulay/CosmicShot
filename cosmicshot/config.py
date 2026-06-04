@@ -50,9 +50,6 @@ DEFAULTS = {
     # Drop shadow / margin added around exported image (CleanShot signature look). 0 to disable.
     "export_padding": 0,
     "export_bg": "#00000000",  # transparent padding background
-    # Last region captured (x, y, w, h) in desktop-pixel space; reused by the
-    # overlay (Enter) and the `last` capture mode.
-    "last_region": None,
     # Spotlight (focus) tool: how dark the surrounding area is (0..0.95).
     "spotlight_darkness": 0.6,
     # Cloud upload. Default: catbox.moe — free, no account, PERMANENT links.

@@ -199,9 +199,22 @@ class Blur(Annotation):
 
 @dataclass
 class Spotlight(Annotation):
-    """Darkens the whole image except a focus rectangle ('spotlight' effect)."""
+    """One dark overlay with one or more focus rectangles ('holes') punched out.
+
+    A single Spotlight holds every focus area, so adding more focus rectangles
+    just punches more holes in the SAME dim layer — the darkness never stacks.
+    The editor routes new spotlight drags into the existing Spotlight via
+    add_hole(); the constructor still takes a first rect so a fresh drag works.
+    """
     x: float; y: float; w: float; h: float
     darkness: float = 0.6
+    holes: List[Tuple[float, float, float, float]] = None
+
+    def rects(self):
+        return [(self.x, self.y, self.w, self.h)] + list(self.holes or [])
+
+    def add_hole(self, x, y, w, h):
+        self.holes = list(self.holes or []) + [(x, y, w, h)]
 
     def draw(self, cr, ctx):
         W = getattr(ctx, "img_w", 0)
@@ -212,25 +225,47 @@ class Spotlight(Annotation):
         cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
         cr.set_source_rgba(0, 0, 0, max(0.0, min(0.95, self.darkness)))
         cr.rectangle(0, 0, W, H)               # whole image
-        cr.rectangle(self.x, self.y, self.w, self.h)  # punch out focus area
+        for rx, ry, rw, rh in self.rects():    # punch out each focus area
+            cr.rectangle(rx, ry, rw, rh)
         cr.fill()
         cr.restore()
 
     def bbox(self):
-        return (self.x, self.y, self.w, self.h)
+        rs = self.rects()
+        x0 = min(r[0] for r in rs); y0 = min(r[1] for r in rs)
+        x1 = max(r[0] + r[2] for r in rs); y1 = max(r[1] + r[3] for r in rs)
+        return (x0, y0, x1 - x0, y1 - y0)
 
     def set_bbox(self, x, y, w, h):
-        self.x, self.y, self.w, self.h = x, y, w, h
+        # Single hole: set directly. Multiple holes: scale them all to the new
+        # union rectangle so the whole spotlight resizes/moves as a unit.
+        rs = self.rects()
+        if len(rs) == 1:
+            self.x, self.y, self.w, self.h = x, y, w, h
+            return
+        ox, oy, ow, oh = self.bbox()
+        sx = w / ow if ow else 1
+        sy = h / oh if oh else 1
+        scaled = [(x + (rx - ox) * sx, y + (ry - oy) * sy, rw * sx, rh * sy)
+                  for rx, ry, rw, rh in rs]
+        (self.x, self.y, self.w, self.h), self.holes = scaled[0], scaled[1:]
+
+    def move(self, dx, dy):
+        self.x += dx; self.y += dy
+        if self.holes:
+            self.holes = [(rx + dx, ry + dy, rw, rh)
+                          for rx, ry, rw, rh in self.holes]
 
     def contains(self, px, py, tol):
-        # grab by the focus-rectangle border (interior stays click-through so you
-        # can keep annotating inside the lit area)
+        # grab by ANY focus-rectangle border (interiors stay click-through so you
+        # can keep annotating inside a lit area)
         t = tol + 3
-        outer = (self.x - t <= px <= self.x + self.w + t
-                 and self.y - t <= py <= self.y + self.h + t)
-        inner = (self.x + t < px < self.x + self.w - t
-                 and self.y + t < py < self.y + self.h - t)
-        return outer and not inner
+        for rx, ry, rw, rh in self.rects():
+            outer = (rx - t <= px <= rx + rw + t and ry - t <= py <= ry + rh + t)
+            inner = (rx + t < px < rx + rw - t and ry + t < py < ry + rh - t)
+            if outer and not inner:
+                return True
+        return False
 
 
 # -------------------------------------------------------------- stroke shapes
@@ -312,8 +347,10 @@ class Text(Annotation):
     size: float = 28
     align: str = "left"
     box_w: Optional[float] = None
-    _w: float = 0.0   # last rendered width  (cache for bbox / handles)
-    _h: float = 0.0   # last rendered height (cache for bbox / handles)
+    _w: float = 0.0   # last rendered text width  (cache for bbox / handles)
+    _h: float = 0.0   # last rendered text height (cache for bbox / handles)
+
+    PAD = 12.0        # breathing room between the text and the box frame
 
     def min_width(self):
         return max(48.0, self.size * 2.2)
@@ -345,19 +382,21 @@ class Text(Annotation):
     def draw(self, cr, ctx):
         layout = self.build_layout(cr)
         _set_color(cr, self.color)
-        cr.move_to(self.x, self.y)
+        cr.move_to(self.x + self.PAD, self.y + self.PAD)  # inset from the frame
         PangoCairo.show_layout(cr, layout)
 
     def bbox(self):
-        w = self._w or (self.box_w or self.min_width())
-        h = self._h or (self.size * 1.4)
+        # The box is the text plus PAD on every side, so the frame never hugs
+        # the glyphs.
+        w = (self._w or (self.box_w or self.min_width())) + 2 * self.PAD
+        h = (self._h or (self.size * 1.4)) + 2 * self.PAD
         return (self.x, self.y, w, h)
 
     def set_bbox(self, x, y, w, h):
         # Resizing sets the wrap WIDTH only — never the font size; height is
-        # content-driven.
+        # content-driven. The frame width includes padding, so subtract it.
         self.x, self.y = x, y
-        self.box_w = max(self.min_width(), w)
+        self.box_w = max(self.min_width(), w - 2 * self.PAD)
 
     def move(self, dx, dy):
         self.x += dx; self.y += dy

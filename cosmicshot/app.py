@@ -41,31 +41,24 @@ def _run_editor(pil_image, cfg):
         pin.pin(surface)  # runs its own loop until closed
 
 
-def mode_region(cfg):
+def _grab_while_importing():
+    """Run the (subprocess) screenshot grab on a thread so the GTK/layer-shell
+    import happens concurrently, shaving startup latency off every capture."""
+    import threading
     monitors = capture.list_monitors()
-    shot_path = capture.full()
-    from .overlay import SelectionOverlay
-    # Always start with a fresh crosshair (no pre-seeded last region — it got in
-    # the way). The region is still recorded so `cosmicshot last` can reuse it.
-    rect = SelectionOverlay(shot_path, monitors).run()
+    box = {}
+    th = threading.Thread(target=lambda: box.__setitem__("p", capture.full()))
+    th.start()
+    from . import overlay  # heavy GTK import overlaps the grab
+    th.join()
+    return monitors, box["p"], overlay
+
+
+def mode_region(cfg):
+    monitors, shot_path, overlay = _grab_while_importing()
+    rect = overlay.SelectionOverlay(shot_path, monitors).run()
     if not rect:
         return  # cancelled
-    cfg["last_region"] = list(rect)
-    config.save(cfg)
-    _edit_region(shot_path, rect, cfg)
-
-
-def mode_last(cfg):
-    """Re-capture the last-used region immediately, skipping the overlay."""
-    rect = cfg.get("last_region")
-    if not rect:
-        return mode_region(cfg)  # nothing remembered yet
-    shot_path = capture.full()
-    full = Image.open(shot_path)
-    x, y, w, h = rect
-    # guard against a monitor-layout change
-    if x < 0 or y < 0 or x + w > full.width or y + h > full.height:
-        return mode_region(cfg)
     _edit_region(shot_path, rect, cfg)
 
 
@@ -80,15 +73,17 @@ def _edit_region(shot_path, rect, cfg):
 
 
 def mode_full(cfg):
-    """Capture the monitor the pointer is on (whole desktop if single-screen)."""
-    monitors = capture.list_monitors()
-    shot_path = capture.full()
+    """Capture a whole screen. With multiple monitors (or always, per the
+    picker), show a screen-wide overlay and let the user click the screen to
+    capture; then open the editor with that monitor."""
+    monitors, shot_path, overlay = _grab_while_importing()
+    m = overlay.ScreenPicker(shot_path, monitors).run()
+    if m is None:
+        return  # cancelled
     img = Image.open(shot_path).convert("RGBA")
-    if len(monitors) > 1:
-        m = capture.monitor_at_pointer(monitors)
-        x0, y0, x1, y1 = m.bounds
-        img = img.crop((max(0, x0), max(0, y0),
-                        min(x1, img.width), min(y1, img.height)))
+    x0, y0, x1, y1 = m.bounds
+    img = img.crop((max(0, x0), max(0, y0),
+                    min(x1, img.width), min(y1, img.height)))
     _run_editor(img, cfg)
 
 
@@ -113,10 +108,9 @@ def main(argv=None):
         prog="cosmicshot",
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
     p.add_argument("mode", nargs="?", default="region",
-                   choices=["region", "last", "full", "window", "open", "tray"],
+                   choices=["region", "full", "screen", "window", "open", "tray"],
                    help="region (default): drag-select then edit; "
-                        "last: re-capture the last-used region; "
-                        "full: monitor under pointer; window: COSMIC picker; "
+                        "screen/full: pick a whole screen; window: COSMIC picker; "
                         "open: edit an existing image (give --file); "
                         "tray: run the panel tray icon.")
     p.add_argument("--file", help="image path for 'open' mode")
@@ -124,12 +118,24 @@ def main(argv=None):
 
     _set_branding()
     cfg = config.load()
+
+    # 'tray' is the background app and must not take the capture lock.
+    if args.mode == "tray":
+        from . import tray
+        return tray.run_tray(cfg) or 0
+
+    # One capture/editor session at a time: if an editor is already open,
+    # don't let another capture pile up on top of it.
+    from .lock import SingleInstance
+    capture_lock = SingleInstance("capture")
+    if not capture_lock.acquire():
+        export.notify("CosmicShot", "A capture is already in progress.")
+        return 0
+
     try:
         if args.mode == "region":
             mode_region(cfg)
-        elif args.mode == "last":
-            mode_last(cfg)
-        elif args.mode == "full":
+        elif args.mode in ("full", "screen"):
             mode_full(cfg)
         elif args.mode == "window":
             mode_window(cfg)
@@ -137,9 +143,6 @@ def main(argv=None):
             if not args.file:
                 p.error("open mode requires --file PATH")
             mode_open(cfg, args.file)
-        elif args.mode == "tray":
-            from . import tray
-            tray.run_tray(cfg)
     except FileNotFoundError as e:
         export.notify("CosmicShot error", str(e))
         print(f"error: {e}", file=sys.stderr)
@@ -148,6 +151,8 @@ def main(argv=None):
         export.notify("CosmicShot error", str(e))
         print(f"error: {e}", file=sys.stderr)
         return 1
+    finally:
+        capture_lock.release()
     return 0
 
 

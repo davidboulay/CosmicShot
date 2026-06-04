@@ -28,8 +28,7 @@ for _name in ("AyatanaAppIndicator3", "AppIndicator3"):
 
 MENU = [
     ("Capture Region", "region"),
-    ("Capture Last Region", "last"),
-    ("Capture Screen (under pointer)", "full"),
+    ("Capture Screen…", "screen"),
     ("Capture Window…", "window"),
 ]
 
@@ -64,6 +63,14 @@ def run_tray(cfg=None):
         raise RuntimeError(
             "No AppIndicator library found. Install gir1.2-ayatanaappindicator3-0.1 "
             "(or gir1.2-appindicator3-0.1).")
+    # Single-instance: launching the app from the dock again must not stack a
+    # second tray icon. Hold the lock for the life of the process.
+    from .lock import SingleInstance
+    tray_lock = SingleInstance("tray")
+    if not tray_lock.acquire():
+        print("cosmicshot: tray already running.")
+        return 0
+    run_tray._lock = tray_lock  # keep a reference so it isn't GC'd
     ind = _AppIndicator.Indicator.new(
         config.APP_ID, config.APP_ID,
         _AppIndicator.IndicatorCategory.APPLICATION_STATUS)
