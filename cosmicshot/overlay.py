@@ -788,8 +788,7 @@ class AutoScrollCapture:
         host = next((m for m in self.monitors
                      if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
                     self.monitors[0])
-        anchor_top = (host.y + host.height) - (ry + rh) < 120
-        self.ctrl = _ControlBar(self, display.get_monitor(host.index), anchor_top)
+        self.ctrl = _ControlBar(self, display.get_monitor(host.index))
         # "Stop & Save" ends the auto-scroll early and keeps what's captured.
         self.ctrl.done.set_label("Stop & Save")
         self.ctrl.set_status("Auto-scrolling…")
@@ -844,29 +843,30 @@ class ScrollCapture:
         monitor with the region, hide it for the instant of the grab so it isn't
         captured; otherwise it lives on another monitor and stays visible."""
         from PIL import Image
-        if self._hide_bar_on_grab:
-            import threading as _t
-            import time
-            ev = _t.Event()
-            GLib.idle_add(lambda: (self.ctrl.hide(), ev.set(), False)[2])
-            ev.wait(0.3)
-            time.sleep(0.04)
         try:
             shot = self._capture.full()
             full = Image.open(shot).convert("RGB")
             x, y, w, h = self.region
-            frame = full.crop((max(0, x), max(0, y),
+            return full.crop((max(0, x), max(0, y),
                               min(x + w, full.width), min(y + h, full.height)))
         except Exception:
-            frame = None
-        if self._hide_bar_on_grab:
-            GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
-        return frame
+            return None
+
+    def _show_card(self):
+        self.ctrl.show_all()
+        return False
 
     def _worker(self):
         import time
         from . import scroll as _scroll
-        last_kept = None
+        # Grab the FIRST frame before the card is shown, so the only place the
+        # card-covered top of the region is taken from is clean. Every later
+        # frame contributes only its (clean) bottom, which the card never covers.
+        first = self._grab_region()
+        if first is not None:
+            self.frames.append(first)
+        GLib.idle_add(self._show_card)
+        last_kept = first
         while self._running:
             frame = self._grab_region()
             if frame is None:
@@ -915,38 +915,22 @@ class ScrollCapture:
             d = _DimWindow(m, gm, self.region)
             self.dims.append(d)
             d.show_all()
-        # Put the control card right at the target so it's easy to find: just
-        # below the region, or just above it if there's no room below. It's
-        # hidden for the instant of each grab, so being near the region never
-        # contaminates the shot.
+        # Place the control card OVER the top of the target region (right where
+        # you're working). It can sit there permanently without flicker because
+        # the stitcher only ever uses each frame's BOTTOM, which the card never
+        # covers — and the worker grabs the very first frame before the card is
+        # shown, so the card-covered top is only ever taken from that clean
+        # frame. So: visible over the work zone, steady, never in the shot.
         rx, ry, rw, rh = self.region
         cx, cy = rx + rw / 2, ry + rh / 2
         host = next((m for m in self.monitors
                      if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
                     self.monitors[0])
-        bar_h, gap = 64, 14
-        TOP = GtkLayerShell.Edge.TOP
-        below = (ry + rh - host.y) + gap                 # margin from monitor top
-        above = (ry - host.y) - gap - bar_h
         self._hide_bar_on_grab = False
-        if below + bar_h <= host.height:
-            mon, edge, margin = host, TOP, below         # below region (clear)
-        elif above >= 8:
-            mon, edge, margin = host, TOP, above          # above region (clear)
-        else:
-            # Region fills its monitor: use another monitor if available (no
-            # flicker), else fall back to overlapping + hiding during grab.
-            def _hits(m):
-                return not (rx + rw <= m.x or rx >= m.x + m.width
-                            or ry + rh <= m.y or ry >= m.y + m.height)
-            free = [m for m in self.monitors if not _hits(m)]
-            if free:
-                mon, edge, margin = free[0], None, 0      # centered, off-region
-            else:
-                mon, edge, margin = host, TOP, 8
-                self._hide_bar_on_grab = True
-        self.ctrl = _ControlBar(self, display.get_monitor(mon.index), edge, margin)
-        self.ctrl.show_all()
+        top_inset = (ry - host.y) + 10          # just inside the region's top
+        self.ctrl = _ControlBar(self, display.get_monitor(host.index),
+                                 GtkLayerShell.Edge.TOP, top_inset)
+        # NOTE: not shown yet — the worker shows it after the first clean grab.
         self._running = True
         # Last-resort escape: never let the capture trap the user.
         GLib.timeout_add_seconds(self.WATCHDOG_S, self._watchdog)
