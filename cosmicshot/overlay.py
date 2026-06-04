@@ -824,6 +824,7 @@ class ScrollCapture:
         self._cancelled = False
         self.too_fast = False        # kept for API compat; never blocks now
         self._warn = None            # None | "up" | "gap" — shown in the status
+        self._reset_pending = False  # set when scrolling up; reset on next down
         self._hide_bar_on_grab = False
         self._thread = None
         self.dims = []
@@ -862,6 +863,19 @@ class ScrollCapture:
         self.ctrl.show_all()
         return False
 
+    def _clean_grab(self):
+        """Grab a frame with the card hidden (so its covered top is clean).
+        Used for the capture base after a reset; one brief blink, by design."""
+        import threading as _t
+        import time
+        ev = _t.Event()
+        GLib.idle_add(lambda: (self.ctrl.hide(), ev.set(), False)[2])
+        ev.wait(0.3)
+        time.sleep(0.04)
+        frame = self._grab_region()
+        GLib.idle_add(lambda: (self.ctrl.show(), False)[1])
+        return frame
+
     def _worker(self):
         import time
         import traceback
@@ -874,32 +888,47 @@ class ScrollCapture:
             self.frames.append(first)
         GLib.idle_add(self._show_card)
         last_kept = first
+        prev = first
         while self._running:
             try:
                 frame = self._grab_region()
                 if frame is None:
                     time.sleep(0.05); continue
                 if last_kept is None:
-                    self.frames.append(frame); last_kept = frame
+                    self.frames.append(frame); last_kept = prev = frame
+                    GLib.idle_add(self._update_status)
+                    time.sleep(0.05); continue
+
+                # Instantaneous direction, measured against the previous grab.
+                going_up = going_down = False
+                if prev is not None and _scroll.changed(prev, frame):
+                    dd_s, dd_e = _scroll.detect_overlap(prev, frame)   # down
+                    uu_s, uu_e = _scroll.detect_overlap(frame, prev)   # up
+                    going_down = _scroll.is_confident(dd_e) and dd_s >= 4 and dd_e <= uu_e
+                    going_up = _scroll.is_confident(uu_e) and uu_s >= 4 and uu_e < dd_e
+
+                if self._reset_pending and going_down:
+                    # User scrolled up, now resumes down: restart the capture
+                    # here with a fresh, clean base frame.
+                    base = self._clean_grab() or frame
+                    self.frames = [base]; last_kept = frame = base
+                    self._reset_pending = False; self._warn = None
+                    GLib.idle_add(self._update_status)
+                elif going_up:
+                    self._warn = "up"; self._reset_pending = True
                     GLib.idle_add(self._update_status)
                 elif _scroll.changed(last_kept, frame):
                     d_s, d_e = _scroll.detect_overlap(last_kept, frame)
-                    u_s, u_e = _scroll.detect_overlap(frame, last_kept)
-                    if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
+                    if _scroll.is_confident(d_e) and d_s >= 4:
                         self.frames.append(frame); last_kept = frame
                         self._warn = None
                         GLib.idle_add(self._update_status)
-                    elif _scroll.is_confident(u_e) and u_s >= 4:
-                        # Overlaps, but the content moved DOWN -> scrolling up
-                        # (wrong direction). Warn; resume when they go back down.
-                        self._warn = "up"
-                        GLib.idle_add(self._update_status)
+                    elif not going_down:
+                        pass               # tiny jitter / no real progress
                     else:
-                        # No overlap with the last kept frame: scrolled past it.
-                        # Stalled until they scroll BACK UP into range — warn and
-                        # recover automatically.
                         self._warn = "gap"
                         GLib.idle_add(self._update_status)
+                prev = frame
             except Exception:
                 traceback.print_exc()          # never let the loop die silently
             time.sleep(0.05)
