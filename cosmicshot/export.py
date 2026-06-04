@@ -27,7 +27,15 @@ def render(base_surface, blur_surface, annotations):
     cr.set_source_surface(base_surface, 0, 0)
     cr.paint()
     ctx = _Ctx(blur_surface, w, h)
+    # One combined spotlight dim layer (overlapping spotlights must not stack),
+    # over the image but under the other annotations — matching the editor.
+    from .tools import Spotlight
+    spots = [a for a in annotations if isinstance(a, Spotlight)]
+    if spots:
+        Spotlight.draw_combined(cr, ctx, spots)
     for ann in annotations:
+        if isinstance(ann, Spotlight):
+            continue
         cr.save()
         ann.draw(cr, ctx)
         cr.restore()

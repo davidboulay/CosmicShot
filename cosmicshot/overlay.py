@@ -352,6 +352,146 @@ class _ScreenPickWindow(Gtk.Window):
         cr.show_text(label)
 
 
+class _WindowPickWindow(Gtk.Window):
+    """Per-monitor layer-shell overlay that highlights the hovered app window."""
+
+    def __init__(self, controller, monitor, gdk_monitor, surface):
+        super().__init__()
+        self.controller = controller
+        self.m = monitor
+        self.surface = surface
+
+        GtkLayerShell.init_for_window(self)
+        GtkLayerShell.set_monitor(self, gdk_monitor)
+        GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+        for edge in (GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT,
+                     GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM):
+            GtkLayerShell.set_anchor(self, edge, True)
+        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        GtkLayerShell.set_exclusive_zone(self, -1)
+
+        self.area = Gtk.DrawingArea()
+        self.area.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK
+            | Gdk.EventMask.KEY_PRESS_MASK)
+        self.area.connect("draw", self.on_draw)
+        self.add(self.area)
+        self.connect("button-press-event", self.on_press)
+        self.connect("motion-notify-event", self.on_motion)
+        self.connect("key-press-event", self.on_key)
+
+    def _scale(self):
+        a = self.area.get_allocation()
+        return (a.width / self.m.width if self.m.width else 1) or 1, \
+               (a.height / self.m.height if self.m.height else 1) or 1
+
+    def on_motion(self, _w, ev):
+        sx, sy = self._scale()
+        self.controller.set_point(self.m.x + ev.x / sx, self.m.y + ev.y / sy)
+        return True
+
+    def on_press(self, _w, ev):
+        if ev.button == 1:
+            self.controller.choose()
+        return True
+
+    def on_key(self, _w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            self.controller.cancel()
+        return True
+
+    def on_draw(self, _w, cr):
+        a = self.area.get_allocation()
+        sx, sy = self._scale()
+        cr.save(); cr.scale(sx, sy)
+        cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+        cr.get_source().set_filter(cairo.FILTER_FAST); cr.paint()
+        cr.restore()
+        cr.set_source_rgba(*DIM); cr.rectangle(0, 0, a.width, a.height); cr.fill()
+
+        win = self.controller.hovered
+        if win:
+            wx, wy = (win["x"] - self.m.x) * sx, (win["y"] - self.m.y) * sy
+            ww, wh = win["w"] * sx, win["h"] * sy
+            cr.save()                       # punch the window region bright
+            cr.rectangle(wx, wy, ww, wh); cr.clip()
+            cr.scale(sx, sy)
+            cr.set_source_surface(self.surface, -self.m.x, -self.m.y); cr.paint()
+            cr.restore()
+            cr.set_source_rgb(*ACCENT); cr.set_line_width(3)
+            cr.rectangle(wx, wy, ww, wh); cr.stroke()
+            self._draw_label(cr, win, wx, wy, ww)
+        return False
+
+    def _draw_label(self, cr, win, wx, wy, ww):
+        name = win.get("app_id") or win.get("title") or "window"
+        label = f"{name}   {int(win['w'])} × {int(win['h'])}"
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(14)
+        ext = cr.text_extents(label); pad = 10
+        bw, bh = ext.width + 2 * pad, ext.height + 2 * pad
+        bx = wx + max(0, (ww - bw) / 2)
+        by = wy + 8
+        cr.set_source_rgba(0, 0, 0, 0.8)
+        _MonitorOverlay._round_rect(cr, bx, by, bw, bh, 8); cr.fill()
+        cr.set_source_rgb(1, 1, 1)
+        cr.move_to(bx + pad, by + pad + ext.height); cr.show_text(label)
+
+
+class WindowPicker:
+    """Dim everything; the app window under the pointer lights up. Click it to
+    capture that whole window. Returns (x, y, w, h) global rect, or None."""
+
+    def __init__(self, screenshot_path, monitors, windows):
+        self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
+        self.monitors = monitors
+        self.windows = windows
+        self.hovered = None
+        self.windows_widgets = []
+        self.result = None
+
+    def _window_at(self, gx, gy):
+        best, best_area = None, None
+        for w in self.windows:
+            if w["x"] <= gx <= w["x"] + w["w"] and w["y"] <= gy <= w["y"] + w["h"]:
+                area = w["w"] * w["h"]
+                if best is None or area < best_area:  # smallest = most specific
+                    best, best_area = w, area
+        return best
+
+    def set_point(self, gx, gy):
+        win = self._window_at(gx, gy)
+        if win is not self.hovered:
+            self.hovered = win
+            for w in self.windows_widgets:
+                w.area.queue_draw()
+
+    def choose(self):
+        if self.hovered:
+            w = self.hovered
+            self.result = (int(w["x"]), int(w["y"]), int(w["w"]), int(w["h"]))
+            self._quit()
+
+    def cancel(self):
+        self.result = None
+        self._quit()
+
+    def _quit(self):
+        for w in self.windows_widgets:
+            w.destroy()
+        GLib.idle_add(Gtk.main_quit)
+
+    def run(self):
+        display = Gdk.Display.get_default()
+        for m in self.monitors:
+            gm = display.get_monitor(m.index)
+            win = _WindowPickWindow(self, m, gm, self.surface)
+            self.windows_widgets.append(win)
+            win.show_all()
+        Gtk.main()
+        return self.result
+
+
 class ScreenPicker:
     """Dim every monitor; the one under the pointer lights up. Click it to pick
     that whole screen. Returns the chosen Monitor, or None if cancelled."""

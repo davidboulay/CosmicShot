@@ -484,7 +484,13 @@ class Editor(Gtk.Window):
                 self._predrag = self._snapshot()
                 self._drag_committed = False
                 return True
+            # A click outside the box just FINISHES editing — it does not also
+            # place a new text box. The next click starts a fresh one.
             self.commit_text()
+            self.selected = None
+            self._update_tool_controls()
+            self.canvas.queue_draw()
+            return True
 
         # Crop is a whole-image region tool and never grabs shapes.
         if t == "crop":
@@ -603,27 +609,12 @@ class Editor(Gtk.Window):
         if self.draft is not None:
             if self._draft_is_meaningful():
                 self._push_undo()
-                existing = (self._existing_spotlight()
-                            if isinstance(self.draft, tools.Spotlight) else None)
-                if existing is not None:
-                    # Add a hole to the single dark overlay instead of stacking
-                    # a second one (darkness must not compound).
-                    existing.add_hole(self.draft.x, self.draft.y,
-                                      self.draft.w, self.draft.h)
-                    self.selected = existing
-                else:
-                    self.annotations.append(self.draft)
-                    self.selected = self.draft  # auto-select the new shape
+                self.annotations.append(self.draft)
+                self.selected = self.draft  # auto-select the new shape
             self.draft = None
         self.press_img = None
         self.canvas.queue_draw()
         return True
-
-    def _existing_spotlight(self):
-        for ann in self.annotations:
-            if isinstance(ann, tools.Spotlight):
-                return ann
-        return None
 
     def _draft_is_meaningful(self):
         d = self.draft
@@ -915,14 +906,22 @@ class Editor(Gtk.Window):
         cr.set_source_surface(self.base_surface, 0, 0)
         cr.get_source().set_filter(cairo.FILTER_GOOD)
         cr.paint()
-        # committed annotations (skip the one being edited; it's drawn specially)
         ctx = _DrawCtx(self.blur_surface, self.base_image.width, self.base_image.height)
+        # ONE combined spotlight dim layer (so overlapping spotlights don't stack
+        # darkness), drawn over the image but under the annotations. Includes the
+        # live draft rect if a spotlight is being dragged.
+        spots = [a for a in self.annotations if isinstance(a, tools.Spotlight)]
+        draft_rect = None
+        if isinstance(self.draft, tools.Spotlight):
+            draft_rect = (self.draft.x, self.draft.y, self.draft.w, self.draft.h)
+        tools.Spotlight.draw_combined(cr, ctx, spots, draft_rect)
+        # committed annotations (spotlights handled above; skip the edited text)
         for ann in self.annotations:
-            if ann is self.editing_text:
+            if ann is self.editing_text or isinstance(ann, tools.Spotlight):
                 continue
             cr.save(); ann.draw(cr, ctx); cr.restore()
-        # live draft
-        if self.draft is not None:
+        # live draft (non-spotlight; spotlight draft is in the combined layer)
+        if self.draft is not None and not isinstance(self.draft, tools.Spotlight):
             cr.save(); self.draft.draw(cr, ctx); cr.restore()
         # text being typed in place: subtle fill behind it, then the text + caret
         if self.editing_text is not None:

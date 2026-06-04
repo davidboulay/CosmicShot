@@ -25,6 +25,21 @@ if [ ${#missing[@]} -ne 0 ]; then
     echo
 fi
 
+# Optional: "Capture Window" compiles a tiny Wayland helper on first use to read
+# per-window geometry (COSMIC's zcosmic_toplevel_info protocol). Without these
+# build tools it silently falls back to COSMIC's interactive picker.
+win_missing=()
+command -v gcc >/dev/null 2>&1 || win_missing+=("gcc")
+command -v wayland-scanner >/dev/null 2>&1 || win_missing+=("wayland-scanner")
+pkg-config --exists wayland-client 2>/dev/null || win_missing+=("libwayland-dev")
+if [ ${#win_missing[@]} -ne 0 ]; then
+    echo "NOTE: 'Capture Window' (precise per-window grab) needs:"
+    printf '  - %s\n' "${win_missing[@]}"
+    echo "  sudo apt install gcc wayland-protocols libwayland-dev"
+    echo "  (without them, Capture Window uses COSMIC's interactive picker.)"
+    echo
+fi
+
 # --- copy package ---
 mkdir -p "$DEST" "$BIN" "$APPS"
 rm -rf "$DEST/cosmicshot"
