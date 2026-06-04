@@ -596,7 +596,7 @@ class _ControlBar(Gtk.Window):
         self.done = Gtk.Button(label="Done (↵)")
         self.done.get_style_context().add_class("scroll-go")
         self.done.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.done.connect("clicked", lambda _b: self.controller.finish())
+        self.done.connect("clicked", lambda _b: self._primary())
         box.pack_start(self.done, False, False, 0)
         cancel = Gtk.Button(label="Cancel (Esc)")
         cancel.connect("clicked", lambda _b: self.controller.cancel())
@@ -605,11 +605,21 @@ class _ControlBar(Gtk.Window):
             w.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.connect("key-press-event", self._on_key)
 
+    def _primary(self):
+        # The primary button is "Done" normally and "Reset" while scrolling up;
+        # the controller decides what it does.
+        fn = getattr(self.controller, "primary_action", None) or self.controller.finish
+        fn()
+
+    def set_primary_label(self, text):
+        if self.done.get_label() != text:
+            self.done.set_label(text)
+
     def _on_key(self, _w, ev):
         if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
             self.controller.cancel()
         elif ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            self.controller.finish()
+            self._primary()
         return True
 
     def set_status(self, text, too_fast=False):
@@ -824,7 +834,7 @@ class ScrollCapture:
         self._cancelled = False
         self.too_fast = False        # kept for API compat; never blocks now
         self._warn = None            # None | "up" | "gap" — shown in the status
-        self._reset_pending = False  # set when scrolling up; reset on next down
+        self._do_reset = False       # set by the Reset button; worker restarts
         self._hide_bar_on_grab = False
         self._thread = None
         self.dims = []
@@ -833,17 +843,30 @@ class ScrollCapture:
     def _update_status(self):
         n = len(self.frames)
         if self._warn == "up":
+            # Offer an explicit restart: the user scrolls to where they want the
+            # capture to begin, then clicks Reset.
+            self.ctrl.set_primary_label("Reset (↵)")
             self.ctrl.set_status(
-                f"⚠ You're scrolling up — scroll DOWN to capture  ({n} frames)",
-                too_fast=True)
+                f"Scrolling up — click Reset to restart here, or scroll DOWN to "
+                f"resume  ({n} frames)", too_fast=True)
         elif self._warn == "gap":
+            self.ctrl.set_primary_label("Done (↵)")
             self.ctrl.set_status(
                 f"⚠ Lost the scroll — scroll back up a little to continue  "
                 f"({n} frames)", too_fast=True)
         else:
+            self.ctrl.set_primary_label("Done (↵)")
             self.ctrl.set_status(
                 f"Scrolling…  {n} frames  ·  ↵ Done  ·  Esc cancel")
         return False
+
+    def primary_action(self):
+        # While scrolling up, the primary button is "Reset" (restart capture at
+        # the current position); otherwise it's "Done" (finish).
+        if self._warn == "up":
+            self._do_reset = True
+        else:
+            self.finish()
 
     def _grab_region(self):
         """Grab the desktop and crop to the region. If the control bar shares a
@@ -891,6 +914,16 @@ class ScrollCapture:
         prev = first
         while self._running:
             try:
+                # Explicit restart requested via the Reset button: rebuild the
+                # capture from a fresh, clean base at the current position.
+                if self._do_reset:
+                    base = self._clean_grab()
+                    if base is not None:
+                        self.frames = [base]; last_kept = prev = base
+                    self._do_reset = False; self._warn = None
+                    GLib.idle_add(self._update_status)
+                    time.sleep(0.05); continue
+
                 frame = self._grab_region()
                 if frame is None:
                     time.sleep(0.05); continue
@@ -907,15 +940,10 @@ class ScrollCapture:
                     going_down = _scroll.is_confident(dd_e) and dd_s >= 4 and dd_e <= uu_e
                     going_up = _scroll.is_confident(uu_e) and uu_s >= 4 and uu_e < dd_e
 
-                if self._reset_pending and going_down:
-                    # User scrolled up, now resumes down: restart the capture
-                    # here with a fresh, clean base frame.
-                    base = self._clean_grab() or frame
-                    self.frames = [base]; last_kept = frame = base
-                    self._reset_pending = False; self._warn = None
-                    GLib.idle_add(self._update_status)
-                elif going_up:
-                    self._warn = "up"; self._reset_pending = True
+                if going_up:
+                    # Wrong direction: warn and offer Reset. If they instead
+                    # scroll back down into overlap, capture just resumes.
+                    self._warn = "up"
                     GLib.idle_add(self._update_status)
                 elif _scroll.changed(last_kept, frame):
                     d_s, d_e = _scroll.detect_overlap(last_kept, frame)
