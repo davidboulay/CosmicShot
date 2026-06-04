@@ -11,6 +11,61 @@ import os
 
 _RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
 _ACTIVE_PID = os.path.join(_RUNTIME, "cosmicshot-capture.pid")
+_TRAY_PID = os.path.join(_RUNTIME, "cosmicshot-tray.pid")
+_RECORDING = os.path.join(_RUNTIME, "cosmicshot-recording.pid")
+
+
+def _alive(pid) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _write_pid(path) -> None:
+    try:
+        with open(path, "w") as fh:
+            fh.write(str(os.getpid()))
+    except OSError:
+        pass
+
+
+def _read_pid(path):
+    try:
+        with open(path) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+# -- tray presence (so a recording can hand its Stop button to the panel) -----
+def write_tray_pid() -> None:
+    _write_pid(_TRAY_PID)
+
+
+def tray_pid():
+    pid = _read_pid(_TRAY_PID)
+    return pid if _alive(pid) else None
+
+
+# -- active recording (panel-controlled Stop) ---------------------------------
+def write_recording_pid() -> None:
+    _write_pid(_RECORDING)
+
+
+def recording_pid():
+    pid = _read_pid(_RECORDING)
+    return pid if _alive(pid) else None
+
+
+def clear_recording_pid() -> None:
+    try:
+        os.unlink(_RECORDING)
+    except OSError:
+        pass
 
 
 def write_active_pid() -> None:

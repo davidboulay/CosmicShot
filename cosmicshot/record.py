@@ -175,22 +175,42 @@ class Recorder:
         raise RuntimeError("No H.264 encoder (install gstreamer1.0-vaapi or "
                            "gstreamer1.0-plugins-ugly).")
 
-    def build(self, fd: int, node_id: int):
+    def _audio_chain(self):
+        """A pulsesrc -> AAC branch feeding the named mux, or None if no AAC
+        encoder is installed (then we record video-only)."""
+        if _have("avenc_aac"):
+            enc = "avenc_aac"
+        elif _have("voaacenc"):
+            enc = "voaacenc"
+        else:
+            print("[record] no AAC encoder — recording without audio",
+                  file=sys.stderr, flush=True)
+            return None
+        parse = "aacparse ! " if _have("aacparse") else ""
+        return (f"pulsesrc name=asrc do-timestamp=true ! queue ! audioconvert ! "
+                f"audioresample ! {enc} ! {parse}queue ! mux.")
+
+    def build(self, fd: int, node_id: int, audio_device=None):
         # videocrop is always present (pass-through when not cropping). For a
         # region we set its borders from the ACTUAL negotiated frame size once
         # caps are known (see set_crop_fraction) — the portal reports a logical
         # size but the PipeWire frames arrive at device resolution, so a crop in
         # logical coords would land in the wrong place on scaled displays.
+        audio = self._audio_chain() if audio_device else None
         desc = (
             f"pipewiresrc fd={fd} path={node_id} do-timestamp=true keepalive-time=1000 "
             f"! videorate ! video/x-raw,framerate=30/1 ! videoconvert ! "
             f"videocrop name=crop ! {self._encoder_chain()} ! "
-            f"mp4mux faststart=true ! filesink name=sink"
+            f"mp4mux name=mux faststart=true ! filesink name=sink"
         )
+        if audio:
+            desc += " " + audio
         self.pipeline = Gst.parse_launch(desc)
         # Set the path on the element (NOT in the parse string): parse_launch is
         # not a shell, so any quoting/spaces in the path would corrupt it.
         self.pipeline.get_by_name("sink").set_property("location", self.out_path)
+        if audio:
+            self.pipeline.get_by_name("asrc").set_property("device", audio_device)
         self._crop = self.pipeline.get_by_name("crop")
 
     def set_crop_fraction(self, fraction):
@@ -450,12 +470,15 @@ class RecordingSession:
         self.recorder = None
         self.error = None
         self.saved = None
+        self.audio_device = None
         self._elapsed = 0
         self._timer_id = None
         self._started = False
         self.ctrl = None
         self._timer_lbl = None
         self._dim = None
+        self._panel_mode = False
+        self._sig_id = None
 
     # -- control card ----------------------------------------------------
     def _build_control(self):
@@ -550,6 +573,12 @@ class RecordingSession:
     # -- lifecycle -------------------------------------------------------
     def run(self):
         from gi.repository import Gtk
+        from . import audio
+        # Ask for an audio source up front (defaults to no sound). Cancel here
+        # means don't record at all.
+        proceed, self.audio_device = audio.choose_source()
+        if not proceed:
+            return None
         # Do NOT show the control card yet: it grabs the keyboard (EXCLUSIVE
         # layer-shell), and showing it now would sit on top of the portal's
         # consent dialog and block window/monitor selection. The portal dialog
@@ -563,10 +592,10 @@ class RecordingSession:
     def _on_ready(self, fd, node_id, props):
         fraction = self._crop_fraction() if (self.target == "region" and self.region) else None
         print(f"[record] stream ready: fd={fd} node={node_id} props={dict(props)} "
-              f"crop_fraction={fraction}", file=sys.stderr, flush=True)
+              f"crop_fraction={fraction} audio={self.audio_device}", file=sys.stderr, flush=True)
         try:
             self.recorder = Recorder(self._tmp)
-            self.recorder.build(fd, node_id)
+            self.recorder.build(fd, node_id, audio_device=self.audio_device)
             if fraction:
                 self.recorder.set_crop_fraction(fraction)
             self.recorder.play()
@@ -575,13 +604,57 @@ class RecordingSession:
             traceback.print_exc()
             return self._on_error(str(exc))
         self._started = True
-        # Recording is live -> now show the controls. Build the region dim
-        # first so the control card (created after) stacks above it.
-        if self.target == "region" and self.region:
-            self._dim = _RegionDim(self.region, self.monitors)
-        self._build_control()
+        # Full-screen has nowhere off-screen to put a control card, so hand the
+        # Stop button to the panel (tray) instead — nothing of ours then appears
+        # in the recording. Other targets keep the floating card off the region.
+        from . import lock
+        if self.target == "screen" and lock.tray_pid():
+            self._enter_panel_mode()
+        else:
+            if self.target == "region" and self.region:
+                self._dim = _RegionDim(self.region, self.monitors)
+            self._build_control()
         self._timer_id = GLib.timeout_add_seconds(1, self._tick)
         self._update()
+
+    # -- panel-controlled Stop (full screen) -----------------------------
+    def _enter_panel_mode(self):
+        """Put the Stop control in the panel: register this recording so the
+        tray shows a red Stop, and listen for its stop signal."""
+        import signal
+        from . import lock
+        self._panel_mode = True
+        lock.write_recording_pid()
+        self._sig_id = GLib.unix_signal_add(
+            GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self._on_stop_signal)
+        self._signal_tray()
+        print("[record] panel mode: Stop is in the tray", file=sys.stderr, flush=True)
+
+    def _on_stop_signal(self):
+        self.stop()
+        return False  # one-shot
+
+    def _signal_tray(self):
+        """Nudge the tray to re-read the recording state (icon + menu)."""
+        import os
+        import signal
+        from . import lock
+        pid = lock.tray_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+            except OSError:
+                pass
+
+    def _exit_panel_mode(self):
+        if not self._panel_mode:
+            return
+        from . import lock
+        if self._sig_id:
+            GLib.source_remove(self._sig_id); self._sig_id = None
+        lock.clear_recording_pid()
+        self._signal_tray()
+        self._panel_mode = False
 
     def _crop_fraction(self):
         """Region as (fx, fy, fw, fh) fractions of its host monitor — invariant
@@ -619,6 +692,7 @@ class RecordingSession:
             self._dim.destroy(); self._dim = None
         if self.ctrl is not None:
             self.ctrl.destroy(); self.ctrl = None
+        self._exit_panel_mode()
 
     def stop(self):
         import os
