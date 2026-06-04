@@ -561,32 +561,52 @@ class _ControlBar(Gtk.Window):
     layer-shell window (not click-through) with EXCLUSIVE keyboard, so Esc, Enter
     and the buttons always work — there is always a way out."""
 
-    def __init__(self, controller, gdk_monitor=None, anchor_top=False):
+    _CSS = b"""
+    .scroll-card { background-color: rgba(20,22,28,0.96);
+                   border: 2px solid #3a8cff; border-radius: 14px;
+                   padding: 12px 18px; }
+    .scroll-card label { color: #ffffff; font-size: 14px; font-weight: bold; }
+    .scroll-card button { padding: 4px 14px; border-radius: 9px; font-weight: bold; }
+    .scroll-go { background-image: none; background-color: #3a8cff; color: #ffffff; }
+    """
+
+    def __init__(self, controller, gdk_monitor=None, top_margin=None, anchor_top=False):
         super().__init__()
         self.controller = controller
         GtkLayerShell.init_for_window(self)
         if gdk_monitor is not None:
             GtkLayerShell.set_monitor(self, gdk_monitor)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-        # Sit clear of the capture region: above it if the region reaches the
-        # bottom of its screen, otherwise below it.
-        edge = GtkLayerShell.Edge.TOP if anchor_top else GtkLayerShell.Edge.BOTTOM
-        GtkLayerShell.set_anchor(self, edge, True)
-        GtkLayerShell.set_margin(self, edge, 40)
+        if top_margin is not None:
+            # Pin just below (or above) the target: anchor to TOP with a margin;
+            # horizontal centering is automatic without left/right anchors.
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, True)
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, max(8, int(top_margin)))
+        else:
+            edge = GtkLayerShell.Edge.TOP if anchor_top else GtkLayerShell.Edge.BOTTOM
+            GtkLayerShell.set_anchor(self, edge, True)
+            GtkLayerShell.set_margin(self, edge, 40)
         GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+
+        prov = Gtk.CssProvider(); prov.load_from_data(self._CSS)
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_top(10); box.set_margin_bottom(10)
-        box.set_margin_start(16); box.set_margin_end(16)
-        box.get_style_context().add_class("scroll-bar")
+        box.get_style_context().add_class("scroll-card")
+        box.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.add(box)
-        self.status = Gtk.Label(label="Scroll down slowly…  0 frames")
+        title = Gtk.Label(label="📜 Scrolling capture")
+        box.pack_start(title, False, False, 0)
+        self.status = Gtk.Label(label="0 frames")
         box.pack_start(self.status, False, False, 0)
         self.done = Gtk.Button(label="Done (↵)")
+        self.done.get_style_context().add_class("scroll-go")
+        self.done.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.done.connect("clicked", lambda _b: self.controller.finish())
         box.pack_start(self.done, False, False, 0)
         cancel = Gtk.Button(label="Cancel (Esc)")
         cancel.connect("clicked", lambda _b: self.controller.cancel())
         box.pack_start(cancel, False, False, 0)
+        for w in (title, self.status):
+            w.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.connect("key-press-event", self._on_key)
 
     def _on_key(self, _w, ev):
@@ -899,29 +919,24 @@ class ScrollCapture:
             d = _DimWindow(m, gm, self.region)
             self.dims.append(d)
             d.show_all()
-        # Keep the control bar OUT of the captured region. Best: a monitor the
-        # region doesn't touch (multi-monitor). Else the region's monitor, clear
-        # of the region if possible; if it fills the screen, hide it per grab.
+        # Put the control card right at the target so it's easy to find: just
+        # below the region, or just above it if there's no room below. It's
+        # hidden for the instant of each grab, so being near the region never
+        # contaminates the shot.
         rx, ry, rw, rh = self.region
-
-        def _intersects(m):
-            return not (rx + rw <= m.x or rx >= m.x + m.width
-                        or ry + rh <= m.y or ry >= m.y + m.height)
-
-        free = [m for m in self.monitors if not _intersects(m)]
-        if free:
-            bar_mon, anchor_top = free[0], False
+        cx, cy = rx + rw / 2, ry + rh / 2
+        host = next((m for m in self.monitors
+                     if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
+                    self.monitors[0])
+        bar_h, gap = 64, 14
+        below = (ry + rh - host.y) + gap                 # margin from monitor top
+        if below + bar_h <= host.height:
+            top_margin = below
         else:
-            cx, cy = rx + rw / 2, ry + rh / 2
-            bar_mon = next((m for m in self.monitors
-                            if m.x <= cx < m.x + m.width
-                            and m.y <= cy < m.y + m.height), self.monitors[0])
-            anchor_top = (bar_mon.y + bar_mon.height) - (ry + rh) < 120
-            # Region covers this monitor edge-to-edge -> nowhere clear; hide it
-            # during each grab so it never lands in the shot.
-            if (ry <= bar_mon.y + 8 and ry + rh >= bar_mon.y + bar_mon.height - 8):
-                self._hide_bar_on_grab = True
-        self.ctrl = _ControlBar(self, display.get_monitor(bar_mon.index), anchor_top)
+            top_margin = max(8, (ry - host.y) - gap - bar_h)  # above the region
+        self._hide_bar_on_grab = True
+        self.ctrl = _ControlBar(self, display.get_monitor(host.index),
+                                 top_margin=top_margin)
         self.ctrl.show_all()
         self._running = True
         # Last-resort escape: never let the capture trap the user.
