@@ -13,6 +13,29 @@ DIM = (0, 0, 0, 0.45)
 ACCENT = (0.0, 0.48, 1.0)  # selection border
 
 
+def dismiss_popups(settle_ms=220):
+    """Force any open panel menu/popup to close before a screen grab.
+
+    The COSMIC panel renders its tray (StatusNotifierItem) menu itself and keeps
+    it open after a click, so a tray-launched capture would grab it into the
+    shot. Briefly mapping a layer-shell surface that takes the keyboard makes the
+    compositor dismiss the popup; we then tear it down and let the caller grab a
+    clean desktop."""
+    win = Gtk.Window()
+    win.set_default_size(1, 1)
+    win.set_opacity(0.0)                       # invisible even if it lingers
+    GtkLayerShell.init_for_window(win)
+    GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+    GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+    win.show_all()
+    # Pump the loop briefly so the surface maps and the popup is dismissed.
+    GLib.timeout_add(settle_ms, Gtk.main_quit)
+    Gtk.main()
+    win.destroy()
+    while Gtk.events_pending():
+        Gtk.main_iteration()
+
+
 class _MonitorOverlay(Gtk.Window):
     def __init__(self, controller, monitor, gdk_monitor, surface):
         super().__init__()
@@ -505,10 +528,11 @@ class _DimWindow(Gtk.Window):
     keyboard or pointer input — all controls live on the separate _ControlBar,
     which is a normal (non-click-through) window so it always works."""
 
-    def __init__(self, monitor, gdk_monitor, region):
+    def __init__(self, monitor, gdk_monitor, region, outline_only=False):
         super().__init__()
         self.m = monitor
         self.region = region
+        self.outline_only = outline_only   # just a border, no darkening (recording)
         self.set_app_paintable(True)
         screen = self.get_screen()
         vis = screen.get_rgba_visual() if screen else None
@@ -538,13 +562,25 @@ class _DimWindow(Gtk.Window):
         a = self.area.get_allocation()
         sx = a.width / self.m.width if self.m.width else 1
         sy = a.height / self.m.height if self.m.height else 1
-        cr.set_operator(cairo.OPERATOR_SOURCE)
-        cr.set_source_rgba(0, 0, 0, 0.55)
-        cr.rectangle(0, 0, a.width, a.height)
-        cr.fill()
         rx, ry, rw, rh = self.region
         lx, ly = (rx - self.m.x) * sx, (ry - self.m.y) * sy
         lw, lh = rw * sx, rh * sy
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        if self.outline_only:
+            # Recording: no darkening — just mark the region with a red frame so
+            # the user can keep working with the windows underneath.
+            cr.set_source_rgba(0, 0, 0, 0)
+            cr.rectangle(0, 0, a.width, a.height)
+            cr.fill()
+            cr.set_operator(cairo.OPERATOR_OVER)
+            cr.set_source_rgb(*ACCENT)
+            cr.set_line_width(3)
+            cr.rectangle(lx - 1.5, ly - 1.5, lw + 3, lh + 3)
+            cr.stroke()
+            return False
+        cr.set_source_rgba(0, 0, 0, 0.55)
+        cr.rectangle(0, 0, a.width, a.height)
+        cr.fill()
         cr.set_source_rgba(0, 0, 0, 0)            # transparent hole = the region
         cr.rectangle(lx, ly, lw, lh)
         cr.fill()
