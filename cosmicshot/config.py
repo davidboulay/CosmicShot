@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
-VERSION = "1.0.0"                       # bump on each release (matches the git tag)
+VERSION = "1.1.0"                       # bump on each release (matches the git tag)
 GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.

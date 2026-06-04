@@ -299,11 +299,10 @@ class Recorder:
 
 
 class _RegionDim:
-    """Mark the recorded region with a red frame (per monitor, click-through),
-    so the user sees what's being captured while still working normally with
-    the windows underneath. Outline-only — no darkening — so moving/ą using a
-    window doesn't fight a full-screen dim. The frame is outside the crop, so
-    it's never in the video. (Class name kept for compatibility.)"""
+    """Dim everything except the recorded region (per monitor, click-through),
+    with a red frame around the region, so the user keeps seeing what's being
+    captured. Click-through, so windows underneath stay usable; the dim/frame
+    sit outside the crop, so they're never in the video."""
 
     def __init__(self, region, monitors):
         self.windows = []
@@ -312,7 +311,7 @@ class _RegionDim:
         disp = Gdk.Display.get_default()
         for m in monitors:
             try:
-                w = _DimWindow(m, disp.get_monitor(m.index), region, outline_only=True)
+                w = _DimWindow(m, disp.get_monitor(m.index), region)
                 self.windows.append(w); w.show_all()
             except Exception:
                 pass
