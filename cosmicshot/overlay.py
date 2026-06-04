@@ -570,22 +570,18 @@ class _ControlBar(Gtk.Window):
     .scroll-go { background-image: none; background-color: #3a8cff; color: #ffffff; }
     """
 
-    def __init__(self, controller, gdk_monitor=None, top_margin=None, anchor_top=False):
+    def __init__(self, controller, gdk_monitor=None, edge=None, margin=0):
         super().__init__()
         self.controller = controller
         GtkLayerShell.init_for_window(self)
         if gdk_monitor is not None:
             GtkLayerShell.set_monitor(self, gdk_monitor)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-        if top_margin is not None:
-            # Pin just below (or above) the target: anchor to TOP with a margin;
-            # horizontal centering is automatic without left/right anchors.
-            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, True)
-            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, max(8, int(top_margin)))
-        else:
-            edge = GtkLayerShell.Edge.TOP if anchor_top else GtkLayerShell.Edge.BOTTOM
+        if edge is not None:
+            # Anchor one edge with a margin; the cross-axis stays centered.
             GtkLayerShell.set_anchor(self, edge, True)
-            GtkLayerShell.set_margin(self, edge, 40)
+            GtkLayerShell.set_margin(self, edge, max(8, int(margin)))
+        # else: no anchors -> centered on the monitor.
         GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
 
         prov = Gtk.CssProvider(); prov.load_from_data(self._CSS)
@@ -929,19 +925,27 @@ class ScrollCapture:
                      if m.x <= cx < m.x + m.width and m.y <= cy < m.y + m.height),
                     self.monitors[0])
         bar_h, gap = 64, 14
+        TOP = GtkLayerShell.Edge.TOP
         below = (ry + rh - host.y) + gap                 # margin from monitor top
         above = (ry - host.y) - gap - bar_h
+        self._hide_bar_on_grab = False
         if below + bar_h <= host.height:
-            top_margin = below                           # below region (clear)
-            self._hide_bar_on_grab = False
+            mon, edge, margin = host, TOP, below         # below region (clear)
         elif above >= 8:
-            top_margin = above                           # above region (clear)
-            self._hide_bar_on_grab = False
+            mon, edge, margin = host, TOP, above          # above region (clear)
         else:
-            top_margin = 8                               # region fills the screen
-            self._hide_bar_on_grab = True                # must hide during grab
-        self.ctrl = _ControlBar(self, display.get_monitor(host.index),
-                                 top_margin=top_margin)
+            # Region fills its monitor: use another monitor if available (no
+            # flicker), else fall back to overlapping + hiding during grab.
+            def _hits(m):
+                return not (rx + rw <= m.x or rx >= m.x + m.width
+                            or ry + rh <= m.y or ry >= m.y + m.height)
+            free = [m for m in self.monitors if not _hits(m)]
+            if free:
+                mon, edge, margin = free[0], None, 0      # centered, off-region
+            else:
+                mon, edge, margin = host, TOP, 8
+                self._hide_bar_on_grab = True
+        self.ctrl = _ControlBar(self, display.get_monitor(mon.index), edge, margin)
         self.ctrl.show_all()
         self._running = True
         # Last-resort escape: never let the capture trap the user.
