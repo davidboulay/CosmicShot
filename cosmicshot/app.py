@@ -196,6 +196,16 @@ def main(argv=None):
         from . import tray
         return tray.run_tray(cfg) or 0
 
+    # Launched from the panel menu? The COSMIC panel keeps its tray menu open
+    # after a click, so dismiss it before grabbing or it lands in the shot.
+    if os.environ.get("COSMICSHOT_FROM_TRAY") and args.mode in (
+            "region", "full", "screen", "window", "scroll"):
+        try:
+            from . import overlay
+            overlay.dismiss_popups()
+        except Exception:
+            pass
+
     # One capture/editor session at a time: if an editor is already open,
     # don't let another capture pile up on top of it.
     from . import lock
