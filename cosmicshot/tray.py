@@ -12,7 +12,7 @@ import sys
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 
 from . import config
 
@@ -50,7 +50,10 @@ def _build_menu():
     menu = Gtk.Menu()
     for label, args in MENU:
         item = Gtk.MenuItem(label=label)
-        item.connect("activate", lambda _w, a=args: _launch(a))
+        # Defer the launch so the menu closes (and drops its grab) before the
+        # capture overlay appears — otherwise the menu lingers over the capture.
+        item.connect("activate",
+                     lambda _w, a=args: GLib.idle_add(lambda: (_launch(a), False)[1]))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
     quit_item = Gtk.MenuItem(label="Quit CosmicShot")
