@@ -805,18 +805,21 @@ class ScrollCapture:
         self.frames = []
         self._running = False
         self._cancelled = False
-        self.too_fast = False
+        self.too_fast = False        # kept for API compat; never blocks now
+        self._gap = False            # transient "slow down" hint
         self._thread = None
         self.dims = []
         self.ctrl = None
 
     def _update_status(self):
-        if self.too_fast:
-            self.ctrl.set_status("Too fast — press Esc / Cancel and retry slower",
-                                 too_fast=True)
+        n = len(self.frames)
+        if self._gap:
+            self.ctrl.set_status(
+                f"Scroll a little slower…  {n} frames  ·  ↵ Done  ·  Esc cancel",
+                too_fast=True)
         else:
             self.ctrl.set_status(
-                f"Scroll down slowly…  {len(self.frames)} frames")
+                f"Scrolling…  {n} frames  ·  ↵ Done  ·  Esc cancel")
         return False
 
     def _grab_region(self):
@@ -839,7 +842,7 @@ class ScrollCapture:
         while self._running:
             frame = self._grab_region()
             if frame is None:
-                time.sleep(0.1); continue
+                time.sleep(0.05); continue
             if last_kept is None:
                 self.frames.append(frame); last_kept = frame
                 GLib.idle_add(self._update_status)
@@ -848,13 +851,17 @@ class ScrollCapture:
                 u_s, u_e = _scroll.detect_overlap(frame, last_kept)
                 if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
                     self.frames.append(frame); last_kept = frame
+                    self._gap = False
                     GLib.idle_add(self._update_status)
                 elif _scroll.is_confident(u_e):
-                    pass                       # scrolled up — ignore
+                    pass                       # scrolled up — ignore, keep going
                 else:
-                    self.too_fast = True
+                    # A momentary too-fast blip: don't discard everything, just
+                    # hint to slow down. When the user eases off, the next frame
+                    # overlaps last_kept again and capture resumes seamlessly.
+                    self._gap = True
                     GLib.idle_add(self._update_status)
-            time.sleep(0.18)
+            time.sleep(0.05)
 
     def finish(self):
         self._running = False
@@ -899,7 +906,7 @@ class ScrollCapture:
         Gtk.main()
         if self._thread:
             self._thread.join(timeout=2)
-        if self._cancelled or self.too_fast:
+        if self._cancelled:
             return []
         return self.frames
 
