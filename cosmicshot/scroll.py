@@ -18,6 +18,9 @@ _SCALE_W = 160        # downscale width used only for fast overlap matching
 _BAND_H = 64          # height of the match band taken from the bottom of a frame
 _MATCH_ERR = 16.0     # mean abs-diff below this = a confident content match
 _CHANGE_ERR = 3.0     # frame-to-frame diff above this = the view actually moved
+_TRIM_BOTTOM = 10     # rows dropped from each frame's bottom before stitching —
+                      # the scroll viewport's bottom edge often has a render
+                      # fade/border that would otherwise show as a seam line.
 
 
 def _gray(img: Image.Image):
@@ -107,9 +110,19 @@ def stitch(frames: List[Image.Image], min_step: int = 4) -> Optional[Image.Image
     frames = [f for f in frames if f is not None]
     if not frames:
         return None
+    # Drop the bottom edge of every frame: that's where the viewport's render
+    # fade/border lives, and including it bakes a faint line into each join.
+    # The trimmed content is recovered from the next frame's clean area.
+    trimmed = []
+    for f in frames:
+        f = f.convert("RGB")
+        if f.height > _TRIM_BOTTOM * 4:
+            f = f.crop((0, 0, f.width, f.height - _TRIM_BOTTOM))
+        trimmed.append(f)
+    frames = trimmed
     if len(frames) == 1:
-        return frames[0].convert("RGB")
-    canvas = frames[0].convert("RGB")
+        return frames[0]
+    canvas = frames[0]
     w = canvas.width
     for prev, cur in zip(frames, frames[1:]):
         if cur.width != w:
