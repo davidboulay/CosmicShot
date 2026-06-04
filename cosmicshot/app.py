@@ -143,7 +143,12 @@ def mode_scroll(cfg, target="region"):
     if not rect:
         return  # cancelled
     from . import overlay, scroll
-    frames = overlay.ScrollCapture(rect, capture).run()
+    monitors = capture.list_monitors()
+    sc = overlay.ScrollCapture(rect, monitors, capture)
+    frames = sc.run()
+    if sc._too_fast:
+        export.notify("CosmicShot", "Scrolled too fast — please retry, scrolling slowly.")
+        return
     if not frames:
         return  # cancelled / nothing captured
     stitched = scroll.stitch(frames)
