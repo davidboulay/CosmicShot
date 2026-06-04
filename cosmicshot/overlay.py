@@ -613,10 +613,12 @@ class _ControlBar(Gtk.Window):
         return True
 
     def set_status(self, text, too_fast=False):
+        # Done stays enabled even during a warning, so you can always finish
+        # with whatever has been captured so far.
         if too_fast:
             self.status.set_markup(
-                "<span foreground='#ff5c5c'><b>" + text + "</b></span>")
-            self.done.set_sensitive(False)
+                "<span foreground='#ffcc44'><b>"
+                + GLib.markup_escape_text(text) + "</b></span>")
         else:
             self.status.set_text(text)
 
@@ -831,8 +833,8 @@ class ScrollCapture:
         n = len(self.frames)
         if self._gap:
             self.ctrl.set_status(
-                f"Scroll a little slower…  {n} frames  ·  ↵ Done  ·  Esc cancel",
-                too_fast=True)
+                f"⚠ Scrolled too far — scroll back up a little to continue  "
+                f"({n} frames captured)", too_fast=True)
         else:
             self.ctrl.set_status(
                 f"Scrolling…  {n} frames  ·  ↵ Done  ·  Esc cancel")
@@ -858,6 +860,7 @@ class ScrollCapture:
 
     def _worker(self):
         import time
+        import traceback
         from . import scroll as _scroll
         # Grab the FIRST frame before the card is shown, so the only place the
         # card-covered top of the region is taken from is clean. Every later
@@ -868,27 +871,33 @@ class ScrollCapture:
         GLib.idle_add(self._show_card)
         last_kept = first
         while self._running:
-            frame = self._grab_region()
-            if frame is None:
-                time.sleep(0.05); continue
-            if last_kept is None:
-                self.frames.append(frame); last_kept = frame
-                GLib.idle_add(self._update_status)
-            elif _scroll.changed(last_kept, frame):
-                d_s, d_e = _scroll.detect_overlap(last_kept, frame)
-                u_s, u_e = _scroll.detect_overlap(frame, last_kept)
-                if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
+            try:
+                frame = self._grab_region()
+                if frame is None:
+                    time.sleep(0.05); continue
+                if last_kept is None:
                     self.frames.append(frame); last_kept = frame
-                    self._gap = False
                     GLib.idle_add(self._update_status)
-                elif _scroll.is_confident(u_e):
-                    pass                       # scrolled up — ignore, keep going
-                else:
-                    # A momentary too-fast blip: don't discard everything, just
-                    # hint to slow down. When the user eases off, the next frame
-                    # overlaps last_kept again and capture resumes seamlessly.
-                    self._gap = True
-                    GLib.idle_add(self._update_status)
+                elif _scroll.changed(last_kept, frame):
+                    d_s, d_e = _scroll.detect_overlap(last_kept, frame)
+                    u_s, u_e = _scroll.detect_overlap(frame, last_kept)
+                    if _scroll.is_confident(d_e) and d_e <= u_e and d_s >= 4:
+                        self.frames.append(frame); last_kept = frame
+                        self._gap = False
+                        GLib.idle_add(self._update_status)
+                    elif _scroll.is_confident(u_e):
+                        # Scrolled up and still overlapping — fine, just waiting
+                        # for the user to come back down. Clear any gap warning.
+                        self._gap = False
+                        GLib.idle_add(self._update_status)
+                    else:
+                        # No overlap with the last kept frame: the user scrolled
+                        # past it. Capture is stalled until they scroll BACK UP
+                        # into range — warn clearly and recover automatically.
+                        self._gap = True
+                        GLib.idle_add(self._update_status)
+            except Exception:
+                traceback.print_exc()          # never let the loop die silently
             time.sleep(0.05)
 
     def finish(self):
