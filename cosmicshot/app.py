@@ -142,15 +142,12 @@ def mode_scroll(cfg, target="region"):
     rect = _pick_rect(target)
     if not rect:
         return  # cancelled
-    from . import inject, overlay, scroll
+    from . import overlay, scroll
     monitors = capture.list_monitors()
-    # Auto-scroll (the app scrolls the window for you) for screen/app-window;
-    # region capture stays manual (auto-scrolling an arbitrary sub-region is
-    # unreliable — there's no single window to drive). Auto needs uinput.
-    if target != "region" and inject.available():
-        sc = overlay.AutoScrollCapture(rect, monitors, capture)
-    else:
-        sc = overlay.ScrollCapture(rect, monitors, capture)
+    # Manual scroll for all modes. Hands-free auto-scroll needs input injection,
+    # which COSMIC (libseat) ignores for user-created uinput devices unless a
+    # udev rule grants the device to the seat — so it isn't reliable here.
+    sc = overlay.ScrollCapture(rect, monitors, capture)
     frames = sc.run()
     if getattr(sc, "too_fast", False):
         export.notify("CosmicShot", "Scrolled too fast — please retry, scrolling slowly.")
