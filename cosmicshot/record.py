@@ -15,6 +15,11 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("Gio", "2.0")
+# Pin the GTK stack to 3.x so the lazy `from gi.repository import Gtk/Gdk` calls
+# in this module don't grab GTK 4 (which would clash with the loaded Gdk 3.0).
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gio, GLib, Gst  # noqa: E402
 
 _BUS = "org.freedesktop.portal.Desktop"
@@ -191,16 +196,149 @@ class Recorder:
         self.pipeline = None
 
 
-class RecordingSession:
-    """Drives a recording end to end: portal handshake, encode, a small control
-    card (● REC + timer + Stop/Cancel), and clean finalisation. Returns the
-    saved path from run(), or None if cancelled/failed."""
 
-    def __init__(self, target, out_path, region=None, monitors=None):
-        self.target = target              # "screen" | "window" | "region"
-        self.out_path = out_path
-        self.region = region              # (x, y, w, h) for region target
+class _RegionDim:
+    """Dim everything except the recorded region (per monitor, click-through),
+    so the user sees what's being captured. Outside the region crop, so it's
+    never in the video."""
+
+    def __init__(self, region, monitors):
+        self.windows = []
+        from gi.repository import Gdk
+        from .overlay import _DimWindow
+        disp = Gdk.Display.get_default()
+        for m in monitors:
+            try:
+                w = _DimWindow(m, disp.get_monitor(m.index), region)
+                self.windows.append(w); w.show_all()
+            except Exception:
+                pass
+
+    def destroy(self):
+        for w in self.windows:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self.windows = []
+
+
+class PreviewWindow:
+    """Plays the just-recorded clip and offers Save / Discard. Closing without
+    saving asks for confirmation."""
+
+    def __init__(self, path, on_save, on_discard):
+        from gi.repository import Gtk
+        _gst()
+        self.path = path
+        self._on_save = on_save
+        self._on_discard = on_discard
+        self.win = Gtk.Window(title="CosmicShot — Recording")
+        self.win.set_default_size(900, 560)
+        self.win.set_position(Gtk.WindowPosition.CENTER)
+        self.win.connect("delete-event", self._on_close)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.win.add(box)
+
+        self._playbin = Gst.ElementFactory.make("playbin", None)
+        sink = Gst.ElementFactory.make("gtksink", None)
+        video = None
+        if sink is not None:
+            self._playbin.set_property("video-sink", sink)
+            video = sink.get_property("widget")
+        self._playbin.set_property("uri", "file://" + path)
+        if video is not None:
+            box.pack_start(video, True, True, 0)
+        else:
+            box.pack_start(Gtk.Label(label="(preview unavailable)"), True, True, 0)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.set_margin_top(8); bar.set_margin_bottom(8)
+        bar.set_margin_start(10); bar.set_margin_end(10)
+        self._play_btn = Gtk.Button(label="⏸ Pause")
+        self._play_btn.connect("clicked", self._toggle_play)
+        bar.pack_start(self._play_btn, False, False, 0)
+        bar.pack_end(self._save_btn(), False, False, 0)
+        discard = Gtk.Button(label="Discard")
+        discard.get_style_context().add_class("destructive-action")
+        discard.connect("clicked", lambda _b: self._discard())
+        bar.pack_end(discard, False, False, 0)
+        box.pack_start(bar, False, False, 0)
+
+        self._bus = self._playbin.get_bus()
+        self._bus.add_signal_watch()
+        self._bus.connect("message::eos", self._loop)
+        self._bus.connect("message::error", lambda *_: None)
+
+    def _save_btn(self):
+        from gi.repository import Gtk
+        b = Gtk.Button(label="Save")
+        b.get_style_context().add_class("suggested-action")
+        b.connect("clicked", lambda _b: self._save())
+        return b
+
+    def _toggle_play(self, _b):
+        ok, state, _ = self._playbin.get_state(0)
+        if state == Gst.State.PLAYING:
+            self._playbin.set_state(Gst.State.PAUSED); self._play_btn.set_label("▶ Play")
+        else:
+            self._playbin.set_state(Gst.State.PLAYING); self._play_btn.set_label("⏸ Pause")
+
+    def _loop(self, *_):
+        self._playbin.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
+
+    def _stop_player(self):
+        try:
+            self._playbin.set_state(Gst.State.NULL)
+        except Exception:
+            pass
+
+    def _save(self):
+        self._stop_player()
+        self.win.destroy()
+        self._on_save()
+
+    def _discard(self):
+        from gi.repository import Gtk
+        dlg = Gtk.MessageDialog(transient_for=self.win, modal=True,
+                                message_type=Gtk.MessageType.WARNING,
+                                buttons=Gtk.ButtonsType.OK_CANCEL,
+                                text="Discard this recording?")
+        dlg.format_secondary_text("The clip will be deleted and not saved.")
+        resp = dlg.run(); dlg.destroy()
+        if resp == Gtk.ResponseType.OK:
+            self._stop_player()
+            self.win.destroy()
+            self._on_discard()
+
+    def _on_close(self, *_):
+        # Closing the window = discard, with a warning.
+        self._discard()
+        return True
+
+    def run(self):
+        self.win.show_all()
+        self._playbin.set_state(Gst.State.PLAYING)
+
+
+class RecordingSession:
+    """Drives a recording end to end: portal handshake, encode to a temp file,
+    a ● REC control card (timer + Stop/Cancel) placed off the recorded area,
+    then a preview window to Save or Discard. run() returns the saved path or
+    None."""
+
+    def __init__(self, target, save_dir, region=None, monitors=None):
+        import os
+        import time
+        self.target = target
+        self.save_dir = save_dir
+        self.region = region
         self.monitors = monitors or []
+        os.makedirs(save_dir, exist_ok=True)
+        stamp = time.strftime("CosmicShot_%Y-%m-%d_%H-%M-%S")
+        self.final_path = os.path.join(save_dir, stamp + ".mp4")
+        self._tmp = os.path.join(save_dir, "." + stamp + ".recording.mp4")
         self.recorder = None
         self.error = None
         self.saved = None
@@ -209,6 +347,7 @@ class RecordingSession:
         self._started = False
         self.ctrl = None
         self._timer_lbl = None
+        self._dim = None
 
     # -- control card ----------------------------------------------------
     def _build_control(self):
@@ -242,7 +381,7 @@ class RecordingSession:
         self._timer_lbl = Gtk.Label(label="Choose what to record…")
         self._timer_lbl.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         box.pack_start(self._timer_lbl, False, False, 0)
-        stop = Gtk.Button(label="Stop & Save")
+        stop = Gtk.Button(label="Stop")
         stop.get_style_context().add_class("rec-stop")
         stop.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         stop.connect("clicked", lambda _b: self.stop())
@@ -255,9 +394,6 @@ class RecordingSession:
         win.show_all()
 
     def _place(self):
-        """Keep the card off the recorded area: for a region, below/above it;
-        for screen, on another monitor; for window, anywhere (the window-capture
-        doesn't include our overlay)."""
         from gi.repository import Gdk, GtkLayerShell
         disp = Gdk.Display.get_default()
 
@@ -277,7 +413,6 @@ class RecordingSession:
             if above >= 8:
                 return gdkmon(host), GtkLayerShell.Edge.TOP, above
             return gdkmon(host), GtkLayerShell.Edge.BOTTOM, 8
-        # window: anywhere; screen: prefer a non-primary monitor.
         if self.target == "screen" and len(self.monitors) > 1:
             other = next((m for m in self.monitors if not m.primary), self.monitors[-1])
             return gdkmon(other), None, 0
@@ -293,6 +428,8 @@ class RecordingSession:
     def run(self):
         from gi.repository import Gtk
         self._build_control()
+        if self.target == "region" and self.region:
+            self._dim = _RegionDim(self.region, self.monitors)
         stype = SOURCE_WINDOW if self.target == "window" else SOURCE_MONITOR
         self._portal = ScreenCastPortal(stype)
         self._portal.start(self._on_ready, self._on_error)
@@ -300,11 +437,9 @@ class RecordingSession:
         return self.saved
 
     def _on_ready(self, fd, node_id, props):
-        crop = None
-        if self.target == "region" and self.region:
-            crop = self._crop_for(props)
+        crop = self._crop_for(props) if (self.target == "region" and self.region) else None
         try:
-            self.recorder = Recorder(self.out_path)
+            self.recorder = Recorder(self._tmp)
             self.recorder.build(fd, node_id, crop)
             self.recorder.play()
         except Exception as exc:
@@ -340,34 +475,62 @@ class RecordingSession:
         else:
             self._timer_lbl.set_text("Choose what to record…")
 
-    def stop(self):
+    def _close_overlays(self):
         if self._timer_id:
             GLib.source_remove(self._timer_id); self._timer_id = None
-        if self.recorder:
-            self.recorder.stop()
-            self.saved = self.out_path
-        self._teardown()
+        if self._dim is not None:
+            self._dim.destroy(); self._dim = None
+        if self.ctrl is not None:
+            self.ctrl.destroy(); self.ctrl = None
 
-    def cancel(self):
-        if self._timer_id:
-            GLib.source_remove(self._timer_id); self._timer_id = None
-        if self.recorder:
-            self.recorder.stop()
+    def stop(self):
+        import os
+        self._close_overlays()
+        if self.recorder is None:
+            return self._quit()
+        self.recorder.stop()
+        if not os.path.exists(self._tmp):
+            return self._quit()
+        # Preview: let the user watch it, then Save or Discard.
+        prev = PreviewWindow(self._tmp, self._save_temp, self._discard_temp)
+        prev.run()
+
+    def _save_temp(self):
         import os
         try:
-            if os.path.exists(self.out_path):
-                os.unlink(self.out_path)   # cancel discards the file
+            os.replace(self._tmp, self.final_path)
+            self.saved = self.final_path
+        except OSError:
+            self.saved = self._tmp
+        self._quit()
+
+    def _discard_temp(self):
+        import os
+        try:
+            os.unlink(self._tmp)
         except OSError:
             pass
         self.saved = None
-        self._teardown()
+        self._quit()
+
+    def cancel(self):
+        import os
+        self._close_overlays()
+        if self.recorder:
+            self.recorder.stop()
+        try:
+            if os.path.exists(self._tmp):
+                os.unlink(self._tmp)
+        except OSError:
+            pass
+        self.saved = None
+        self._quit()
 
     def _on_error(self, msg):
         self.error = msg
-        self._teardown()
+        self._close_overlays()
+        self._quit()
 
-    def _teardown(self):
+    def _quit(self):
         from gi.repository import Gtk
-        if self.ctrl is not None:
-            self.ctrl.destroy()
         GLib.idle_add(Gtk.main_quit)

@@ -17,6 +17,9 @@ def _set_branding():
     """Set the Wayland app_id and default window icon so the dock/tray and
     notifications show the CosmicShot icon instead of a generic placeholder."""
     try:
+        import gi
+        gi.require_version("Gtk", "3.0")        # else the unversioned import
+        gi.require_version("Gdk", "3.0")        # grabs GTK4 and clashes
         from gi.repository import GLib, Gtk
         GLib.set_prgname(config.APP_ID)         # Wayland app_id -> matches .desktop
         try:
@@ -164,26 +167,20 @@ def mode_scroll(cfg, target="region"):
     _run_editor(stitched.convert("RGBA"), cfg)
 
 
-def _video_path(cfg):
-    import time
-    d = cfg.get("save_dir") or str(os.path.join(os.path.expanduser("~"), "Videos"))
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, time.strftime("CosmicShot_%Y-%m-%d_%H-%M-%S.mp4"))
-
-
 def mode_record(cfg, target="region"):
     """Record video of a region / app window / whole screen to an mp4 via the
     ScreenCast portal. The portal natively picks the window or monitor; region
-    additionally crops to the selected rectangle."""
+    additionally crops to the selected rectangle. After recording you preview
+    the clip and choose Save or Discard."""
     region = None
     if target == "region":
         region = _pick_rect("region")
         if not region:
             return  # cancelled before recording
-    out = _video_path(cfg)
+    save_dir = cfg.get("save_dir") or os.path.join(os.path.expanduser("~"), "Videos")
     monitors = capture.list_monitors()
     from .record import RecordingSession
-    sess = RecordingSession(target, out, region=region, monitors=monitors)
+    sess = RecordingSession(target, save_dir, region=region, monitors=monitors)
     saved = sess.run()
     if sess.error:
         export.notify("CosmicShot — recording failed", sess.error)
@@ -260,6 +257,8 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 1
     except Exception as e:  # surface failures to the user
+        import traceback
+        traceback.print_exc()
         export.notify("CosmicShot error", str(e))
         print(f"error: {e}", file=sys.stderr)
         return 1
