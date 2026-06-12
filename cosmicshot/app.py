@@ -195,9 +195,11 @@ def mode_open(cfg, path):
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
+    from . import __version__
     p = argparse.ArgumentParser(
         prog="cosmicshot",
         description="CleanShot-style screenshot capture + annotation for COSMIC/Wayland.")
+    p.add_argument("--version", action="version", version=f"CosmicShot {__version__}")
     p.add_argument("mode", nargs="?", default="region",
                    choices=["region", "full", "screen", "window", "scroll",
                             "record", "open", "tray", "settings"],
