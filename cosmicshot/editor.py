@@ -50,6 +50,27 @@ def _resize_bbox(bbox, handle, nx, ny):
     return (nl, nt, max(1, nr - nl), max(1, nb - nt))
 
 
+def _cursor_pixbuf(size=16):
+    """Draw the classic Adobe-style selection pointer (slanted arrow cursor)."""
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    cr = cairo.Context(surf)
+    sc = size / 16.0
+    pts = [(1, 1), (1, 11.5), (3.6, 8.9), (5.6, 13.6), (7.3, 12.8),
+           (5.3, 8.1), (9.0, 8.1)]
+    cr.move_to(pts[0][0] * sc, pts[0][1] * sc)
+    for px, py in pts[1:]:
+        cr.line_to(px * sc, py * sc)
+    cr.close_path()
+    cr.set_source_rgb(1, 1, 1)        # white fill -> visible on the dark toolbar
+    cr.fill_preserve()
+    cr.set_source_rgb(0.1, 0.1, 0.1)  # dark outline -> also reads on light themes
+    cr.set_line_width(1.0)
+    cr.set_line_join(1)
+    cr.stroke()
+    surf.flush()
+    return Gdk.pixbuf_get_from_surface(surf, 0, 0, size, size)
+
+
 class _DrawCtx:
     def __init__(self, blur_surface, img_w=0, img_h=0):
         self.blur_surface = blur_surface
@@ -184,7 +205,12 @@ class Editor(Gtk.Window):
         for key, label, glyph in TOOLS:
             btn = Gtk.RadioButton.new_from_widget(group)
             btn.set_mode(False)  # render as toggle button, not radio dot
-            btn.set_label(glyph)
+            if key == "select":
+                # Photoshop/Illustrator-style selection pointer, not a drawn arrow
+                btn.set_image(Gtk.Image.new_from_pixbuf(_cursor_pixbuf(16)))
+                btn.set_always_show_image(True)
+            else:
+                btn.set_label(glyph)
             btn.set_tooltip_text(label)
             btn.connect("toggled", self.on_tool_toggled, key)
             group = group or btn
