@@ -10,7 +10,7 @@ from . import config, export, tools
 from .imaging import pil_to_surface, make_pixelated
 
 TOOLS = [
-    ("select",    "Select / move / resize (V)", "↖"),
+    ("select",    "Select / move / resize (V)", "✋"),
     ("arrow",     "Arrow (A)",       "↗"),
     ("rect",      "Rectangle (R)",   "▭"),
     ("ellipse",   "Ellipse (E)",     "◯"),
@@ -48,27 +48,6 @@ def _resize_bbox(bbox, handle, nx, ny):
     nl, nr = min(l, r), max(l, r)
     nt, nb = min(t, b), max(t, b)
     return (nl, nt, max(1, nr - nl), max(1, nb - nt))
-
-
-def _cursor_pixbuf(size=16):
-    """Draw the classic Adobe-style selection pointer (slanted arrow cursor)."""
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
-    cr = cairo.Context(surf)
-    sc = size / 16.0
-    pts = [(1, 1), (1, 11.5), (3.6, 8.9), (5.6, 13.6), (7.3, 12.8),
-           (5.3, 8.1), (9.0, 8.1)]
-    cr.move_to(pts[0][0] * sc, pts[0][1] * sc)
-    for px, py in pts[1:]:
-        cr.line_to(px * sc, py * sc)
-    cr.close_path()
-    cr.set_source_rgb(1, 1, 1)        # white fill -> visible on the dark toolbar
-    cr.fill_preserve()
-    cr.set_source_rgb(0.1, 0.1, 0.1)  # dark outline -> also reads on light themes
-    cr.set_line_width(1.0)
-    cr.set_line_join(1)
-    cr.stroke()
-    surf.flush()
-    return Gdk.pixbuf_get_from_surface(surf, 0, 0, size, size)
 
 
 class _DrawCtx:
@@ -205,12 +184,8 @@ class Editor(Gtk.Window):
         for key, label, glyph in TOOLS:
             btn = Gtk.RadioButton.new_from_widget(group)
             btn.set_mode(False)  # render as toggle button, not radio dot
-            if key == "select":
-                # Photoshop/Illustrator-style selection pointer, not a drawn arrow
-                btn.set_image(Gtk.Image.new_from_pixbuf(_cursor_pixbuf(16)))
-                btn.set_always_show_image(True)
-            else:
-                btn.set_label(glyph)
+            btn.set_label(glyph)
+            btn.set_size_request(36, 32)  # uniform tiles
             btn.set_tooltip_text(label)
             btn.connect("toggled", self.on_tool_toggled, key)
             group = group or btn
@@ -512,8 +487,9 @@ class Editor(Gtk.Window):
                 self.canvas.queue_draw()
 
     def _tool_cursor(self):
-        """The canvas cursor for the active tool when not hovering a shape."""
-        return {"crop": "crosshair", "select": "default"}.get(self.tool, "crosshair")
+        """The canvas cursor for the active tool when not hovering a shape.
+        The Select tool shows an open hand (grab) over the image."""
+        return {"crop": "crosshair", "select": "grab"}.get(self.tool, "crosshair")
 
     def _set_canvas_cursor(self, name):
         """Set the cursor on the CANVAS only — never the toolbar / window chrome."""
@@ -721,6 +697,7 @@ class Editor(Gtk.Window):
             self.press_img = None
             self._maybe_edit = None
             self._press_moved = False
+            self._set_canvas_cursor(self._tool_cursor())  # release closed hand
             # a click (no drag) on a text box -> edit it
             if was_move and cand is not None and not moved:
                 self.edit_existing(cand)
@@ -805,6 +782,8 @@ class Editor(Gtk.Window):
             else:
                 sel.set_bbox(*_resize_bbox(sel.bbox(), self.active_handle, ix, iy))
         elif self._moving:
+            if self.tool == "select":
+                self._set_canvas_cursor("grabbing")  # closed hand while dragging
             lx, ly = self._drag_last
             sel.move(ix - lx, iy - ly)
             self._drag_last = (ix, iy)
