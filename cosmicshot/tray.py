@@ -70,6 +70,10 @@ def _on_activate(item, args):
 
 def _build_menu():
     menu = Gtk.Menu()
+    header = Gtk.MenuItem(label=f"CosmicShot v{config.VERSION}")
+    header.set_sensitive(False)   # non-clickable version label
+    menu.append(header)
+    menu.append(Gtk.SeparatorMenuItem())
     for entry in MENU:
         if entry is None:
             menu.append(Gtk.SeparatorMenuItem())
