@@ -136,19 +136,25 @@ class SettingsWindow:
             path = updates.download_deb(self._latest["deb_url"])
             GLib.idle_add(lambda: self._status.set_text(
                 "Installing (enter your password)…") or False)
-            ok = updates.install_deb(path) if path else False
-            GLib.idle_add(self._update_done, ok)
+            if path:
+                ok, msg = updates.install_deb(path)
+            else:
+                ok, msg = False, "Could not download the update."
+            GLib.idle_add(self._update_done, ok, msg)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _update_done(self, ok):
-        self._update_btn.set_sensitive(True)
+    def _update_done(self, ok, msg=None):
         if ok:
-            self._status.set_markup("<b>Updated.</b> Restart CosmicShot to use the new version.")
+            ver = (self._latest or {}).get("version", "")
+            self._status.set_markup("<b>Update installed — restarting…</b>")
             self._update_btn.hide()
-            export.notify("CosmicShot", "Update installed — restart to use it.")
+            export.notify("CosmicShot", f"Updated to {ver} — restarting…".strip())
+            # brief feedback, then re-exec into the new version (briefing §8)
+            GLib.timeout_add(1200, lambda: (updates.relaunch(), False)[1])
         else:
-            self._status.set_text("Update failed (cancelled or no .deb install).")
+            self._update_btn.set_sensitive(True)
+            self._status.set_text(f"Update failed: {msg or 'unknown error'}")
         return False
 
     # -- shortcuts -------------------------------------------------------

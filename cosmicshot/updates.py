@@ -84,15 +84,44 @@ def download_deb(deb_url):
 
 
 def install_deb(deb_path):
-    """Install the .deb with pkexec (prompts for the password). Returns True on
-    success. Runs in the foreground; call from a worker thread for the UI."""
+    """Install the .deb with pkexec (prompts for the password).
+
+    Returns (ok, message). Runs in the foreground; call from a worker thread for
+    the UI. apt-get pulls in dependencies; the absolute path makes it a local
+    install. --allow-downgrades/--reinstall keep it working across re-installs.
+    """
     if not deb_path or not os.path.exists(deb_path):
-        return False
+        return False, "Update package not found."
     try:
-        # apt-get handles dependencies; the absolute path makes it a local install.
         res = subprocess.run(
-            ["pkexec", "apt-get", "install", "-y", "--reinstall", deb_path],
+            ["pkexec", "apt-get", "install", "-y", "--reinstall",
+             "--allow-downgrades", deb_path],
             capture_output=True, text=True)
-        return res.returncode == 0
-    except Exception:
-        return False
+    except FileNotFoundError:
+        return False, "pkexec (PolicyKit) is not available on this system."
+    except Exception as e:
+        return False, str(e)
+    if res.returncode == 0:
+        return True, None
+    # pkexec uses 126/127 when the password dialog is dismissed/denied.
+    if res.returncode in (126, 127):
+        return False, "Authentication cancelled."
+    last = (res.stderr or "").strip().splitlines()
+    return False, (last[-1] if last else "apt-get failed.")
+
+
+def relaunch():
+    """Re-exec into the freshly installed version (briefing §8). Also restarts
+    the panel tray process so its long-running instance picks up the new code."""
+    import sys
+    args = sys.argv[1:]
+    if "tray" not in args:  # don't kill ourselves if we ARE the tray
+        try:
+            subprocess.Popen(["sh", "-c",
+                              "pkill -f 'cosmicshot tray' 2>/dev/null; sleep 0.6; "
+                              "setsid -f cosmicshot tray >/dev/null 2>&1 || true"])
+        except Exception:
+            pass
+    # current_exe equivalent: re-run this module with the same args + env
+    # (PYTHONPATH from the launcher still points at the installed package).
+    os.execv(sys.executable, [sys.executable, "-m", "cosmicshot"] + args)
