@@ -112,14 +112,23 @@ def install_deb(deb_path):
 
 def relaunch():
     """Re-exec into the freshly installed version (briefing §8). Also restarts
-    the panel tray process so its long-running instance picks up the new code."""
+    the long-lived panel tray so it picks up the new code."""
     import sys
     args = sys.argv[1:]
-    if "tray" not in args:  # don't kill ourselves if we ARE the tray
+    if "tray" not in args:  # don't restart the tray if we ARE the tray
         try:
-            subprocess.Popen(["sh", "-c",
-                              "pkill -f 'cosmicshot tray' 2>/dev/null; sleep 0.6; "
-                              "setsid -f cosmicshot tray >/dev/null 2>&1 || true"])
+            # Detached session so it survives our os.execv below. The kill
+            # pattern uses a [-]m regex so pkill matches the real tray
+            # ("python3 -m cosmicshot tray") but NOT this restarter's own
+            # command line — otherwise pkill kills the restarter before it can
+            # spawn the new tray (the bug that left the tray on the old code).
+            subprocess.Popen(
+                ["sh", "-c",
+                 "sleep 0.8; pkill -f '[-]m cosmicshot tray' 2>/dev/null; "
+                 "exec cosmicshot tray"],
+                start_new_session=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
         except Exception:
             pass
     # current_exe equivalent: re-run this module with the same args + env
