@@ -27,15 +27,15 @@ for _name in ("AyatanaAppIndicator3", "AppIndicator3"):
         continue
 
 MENU = [
-    ("Capture Region", ["region"]),
-    ("Capture Screen…", ["screen"]),
-    ("Capture App Window…", ["window"]),
-    ("Scrolling Screenshot (Region)…", ["scroll", "--target", "region"]),
-    ("Scrolling Screenshot (App Window)…", ["scroll", "--target", "window"]),
+    ("Capture Region", ["region"], "applets-screenshooter-symbolic"),
+    ("Capture Screen…", ["screen"], "video-display-symbolic"),
+    ("Capture App Window…", ["window"], "focus-windows-symbolic"),
+    ("Scrolling Screenshot (Region)…", ["scroll", "--target", "region"], "go-bottom-symbolic"),
+    ("Scrolling Screenshot (App Window)…", ["scroll", "--target", "window"], "go-bottom-symbolic"),
     None,  # separator
-    ("Record Region…", ["record", "--target", "region"]),
-    ("Record App Window…", ["record", "--target", "window"]),
-    ("Record Screen…", ["record", "--target", "screen"]),
+    ("Record Region…", ["record", "--target", "region"], "media-record-symbolic"),
+    ("Record App Window…", ["record", "--target", "window"], "media-record-symbolic"),
+    ("Record Screen…", ["record", "--target", "screen"], "media-record-symbolic"),
 ]
 
 
@@ -68,9 +68,23 @@ def _on_activate(item, args):
     GLib.timeout_add(_MENU_CLOSE_MS, lambda: (_launch(args), False)[1])
 
 
+def _menu_item(label, icon_name=None):
+    """A menu item with an optional themed icon (icons are shown by panels that
+    support dbusmenu icons; otherwise it's a plain text item)."""
+    if icon_name:
+        try:
+            item = Gtk.ImageMenuItem.new_with_label(label)
+            item.set_image(Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU))
+            item.set_always_show_image(True)
+            return item
+        except Exception:
+            pass
+    return Gtk.MenuItem(label=label)
+
+
 def _build_menu():
     menu = Gtk.Menu()
-    header = Gtk.MenuItem(label=f"CosmicShot v{config.VERSION}")
+    header = _menu_item(f"CosmicShot  ·  v{config.VERSION}", "applets-screenshooter-symbolic")
     header.set_sensitive(False)   # non-clickable version label
     menu.append(header)
     menu.append(Gtk.SeparatorMenuItem())
@@ -78,18 +92,18 @@ def _build_menu():
         if entry is None:
             menu.append(Gtk.SeparatorMenuItem())
             continue
-        label, args = entry
-        item = Gtk.MenuItem(label=label)
+        label, args, icon = entry
+        item = _menu_item(label, icon)
         item.connect("activate", lambda w, a=args: _on_activate(w, a))
         menu.append(item)
     menu.append(Gtk.SeparatorMenuItem())
-    settings_item = Gtk.MenuItem(label="Settings…")
+    settings_item = _menu_item("Settings…", "preferences-system-symbolic")
     # Settings is a window, not a capture — launch it directly (no menu-dismiss
     # dance needed).
     settings_item.connect("activate",
                           lambda *_: GLib.idle_add(lambda: (_launch(["settings"]), False)[1]))
     menu.append(settings_item)
-    quit_item = Gtk.MenuItem(label="Quit CosmicShot")
+    quit_item = _menu_item("Quit CosmicShot", "application-exit-symbolic")
     quit_item.connect("activate", lambda *_: Gtk.main_quit())
     menu.append(quit_item)
     menu.show_all()

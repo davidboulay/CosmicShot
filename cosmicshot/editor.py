@@ -27,6 +27,75 @@ TOOLS = [
 ACCENT = (0.0, 0.48, 1.0)
 _BOX_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
 
+# --- modern editor theme (scoped via .cs-* classes so it only touches our UI) ---
+_THEME_CSS = b"""
+.cs-toolbar {
+  background-color: #16171b;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  padding: 8px 10px;
+}
+.cs-group {
+  background-color: rgba(255,255,255,0.05);
+  border-radius: 11px;
+  padding: 3px;
+}
+.cs-sep { background-color: rgba(255,255,255,0.09); margin: 4px 6px; }
+
+button.cs-tool {
+  background-image: none;
+  background-color: transparent;
+  color: #d3d4d9;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  min-width: 30px;
+  min-height: 28px;
+  margin: 0 1px;
+  padding: 2px 4px;
+  font-size: 15px;
+}
+button.cs-tool:hover { background-color: rgba(255,255,255,0.13); color: #ffffff; }
+button.cs-tool:checked { background-color: #007aff; color: #ffffff; }
+button.cs-tool:checked:hover { background-color: #338cff; }
+
+button.cs-swatch {
+  background-image: none;
+  border: 2px solid transparent;
+  box-shadow: none;
+  border-radius: 11px;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  margin: 0 2px;
+}
+button.cs-swatch:hover { border-color: rgba(255,255,255,0.55); }
+button.cs-swatch.selected { border-color: #ffffff; }
+
+.cs-toolbar spinbutton {
+  border-radius: 8px;
+  min-height: 26px;
+}
+.cs-toolbar label { color: #c6c7cc; }
+"""
+
+_theme_installed = False
+
+
+def _install_theme():
+    global _theme_installed
+    if _theme_installed:
+        return
+    try:
+        from gi.repository import Gdk
+        provider = Gtk.CssProvider()
+        provider.load_from_data(_THEME_CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        _theme_installed = True
+    except Exception:
+        pass
+
 
 def _box_handle_points(bbox):
     x, y, w, h = bbox
@@ -171,29 +240,34 @@ class Editor(Gtk.Window):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
 
+        _install_theme()
+
         # toolbar packed directly so the window is forced at least this wide
         # (tools are always fully visible, never cut off)
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        toolbar.set_border_width(6)
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        toolbar.get_style_context().add_class("cs-toolbar")
         root.pack_start(toolbar, False, False, 0)
         self.toolbar = toolbar
 
-        # tool toggle buttons (radio behavior)
+        # tool toggle buttons (radio behavior), in a segmented group
+        toolgroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        toolgroup.get_style_context().add_class("cs-group")
+        toolbar.pack_start(toolgroup, False, False, 0)
         group = None
         self.tool_buttons = {}
         for key, label, glyph in TOOLS:
             btn = Gtk.RadioButton.new_from_widget(group)
             btn.set_mode(False)  # render as toggle button, not radio dot
             btn.set_label(glyph)
-            btn.set_size_request(36, 32)  # uniform tiles
+            btn.get_style_context().add_class("cs-tool")
             btn.set_tooltip_text(label)
             btn.connect("toggled", self.on_tool_toggled, key)
             group = group or btn
-            toolbar.pack_start(btn, False, False, 0)
+            toolgroup.pack_start(btn, False, False, 0)
             self.tool_buttons[key] = btn
             self._hand_on_hover(btn)
 
-        toolbar.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
+        self._add_sep(toolbar)
 
         # --- contextual style controls (placed near the tools so they're always
         #     visible without scrolling; only one shows at a time) ---
@@ -255,16 +329,22 @@ class Editor(Gtk.Window):
         self.dark_ctl.pack_start(self.dark_spin, False, False, 0)
         toolbar.pack_start(self.dark_ctl, False, False, 4)
 
-        toolbar.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
+        self._add_sep(toolbar)
 
-        # color swatches
+        # color swatches (circular, grouped, with a selection ring)
+        swgroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        swgroup.get_style_context().add_class("cs-group")
+        toolbar.pack_start(swgroup, False, False, 0)
+        self._swatches = []
         for hexc in self.cfg["palette"]:
             sw = Gtk.Button()
-            sw.set_size_request(24, 24)
+            sw.set_size_request(22, 22)
             sw.set_tooltip_text(hexc)
+            sw.get_style_context().add_class("cs-swatch")
             self._style_swatch(sw, hexc)
             sw.connect("clicked", self.on_color, hexc)
-            toolbar.pack_start(sw, False, False, 0)
+            swgroup.pack_start(sw, False, False, 0)
+            self._swatches.append((sw, hexc.lower()))
             self._hand_on_hover(sw)
 
         # custom color
@@ -275,6 +355,7 @@ class Editor(Gtk.Window):
         self.color_btn.connect("color-set", self.on_custom_color)
         toolbar.pack_start(self.color_btn, False, False, 2)
         self._hand_on_hover(self.color_btn)
+        self._update_swatch_selection(self.color)  # ring the current colour
 
         # zoom controls (right end of the toolbar)
         toolbar.pack_end(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
@@ -378,9 +459,24 @@ class Editor(Gtk.Window):
             self.canvas.queue_draw()
 
     def _style_swatch(self, btn, hexc):
-        css = f"button {{ background: {hexc}; min-width:24px; min-height:24px; padding:0; }}".encode()
+        # only the fill colour here; shape/size/ring come from the .cs-swatch class
+        css = f"button {{ background-image:none; background-color:{hexc}; }}".encode()
         prov = Gtk.CssProvider(); prov.load_from_data(css)
         btn.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def _add_sep(self, toolbar):
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        sep.get_style_context().add_class("cs-sep")
+        toolbar.pack_start(sep, False, False, 2)
+
+    def _update_swatch_selection(self, hexc):
+        hexc = (hexc or "").lower()
+        for sw, h in getattr(self, "_swatches", []):
+            ctx = sw.get_style_context()
+            if h == hexc:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
 
     # ----------------------------------------------------------- coord mapping
     def _fit_scale(self):
@@ -518,12 +614,14 @@ class Editor(Gtk.Window):
         self.color = hexc
         rgba = Gdk.RGBA(); rgba.parse(hexc)
         self.color_btn.set_rgba(rgba)
+        self._update_swatch_selection(hexc)
         self._apply_color_to_selected(hexc)
 
     def on_custom_color(self, btn):
         rgba = btn.get_rgba()
         self.color = "#%02x%02x%02x" % (int(rgba.red * 255), int(rgba.green * 255),
                                         int(rgba.blue * 255))
+        self._update_swatch_selection(self.color)  # clears the preset rings
         self._apply_color_to_selected(self.color)
 
     def _apply_color_to_selected(self, hexc):
