@@ -37,11 +37,7 @@ def _set_branding():
 
 def _run_editor(pil_image, cfg):
     from .editor import Editor
-    ed = Editor(pil_image, cfg)
-    surface = ed.run()
-    if surface is not None:
-        from . import pin
-        pin.pin(surface)  # runs its own loop until closed
+    Editor(pil_image, cfg).run()
 
 
 def _grab_while_importing():

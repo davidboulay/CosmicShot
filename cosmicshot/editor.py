@@ -6,7 +6,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 import cairo  # noqa: E402
 
-from . import config, export, tools
+from . import config, export, tools, icons
+from . import theme as theme_mod
 from .imaging import pil_to_surface, make_pixelated
 
 TOOLS = [
@@ -27,72 +28,76 @@ TOOLS = [
 ACCENT = (0.0, 0.48, 1.0)
 _BOX_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
 
-# --- modern editor theme (scoped via .cs-* classes so it only touches our UI) ---
-_THEME_CSS = b"""
-.cs-toolbar {
-  background-color: #16171b;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+# --- editor theme (scoped via .cs-* classes so it only touches our UI, and
+#     built from a light/dark palette so it follows COSMIC) ---
+def _build_css(pal):
+    ring = "#ffffff" if pal is theme_mod.DARK else "#1b1c20"
+    return f"""
+.cs-toolbar {{
+  background-color: {pal['toolbar']};
+  border-bottom: 1px solid {pal['sep']};
   padding: 8px 10px;
-}
-.cs-group {
-  background-color: rgba(255,255,255,0.05);
-  border-radius: 11px;
-  padding: 3px;
-}
-.cs-sep { background-color: rgba(255,255,255,0.09); margin: 4px 6px; }
-
-button.cs-tool {
-  background-image: none;
-  background-color: transparent;
-  color: #d3d4d9;
-  border: none;
-  box-shadow: none;
-  border-radius: 8px;
-  min-width: 30px;
-  min-height: 28px;
-  margin: 0 1px;
-  padding: 2px 4px;
-  font-size: 15px;
-}
-button.cs-tool:hover { background-color: rgba(255,255,255,0.13); color: #ffffff; }
-button.cs-tool:checked { background-color: #007aff; color: #ffffff; }
-button.cs-tool:checked:hover { background-color: #338cff; }
-
-button.cs-swatch {
-  background-image: none;
-  border: 2px solid transparent;
-  box-shadow: none;
-  border-radius: 11px;
-  min-width: 18px;
-  min-height: 18px;
-  padding: 0;
-  margin: 0 2px;
-}
-button.cs-swatch:hover { border-color: rgba(255,255,255,0.55); }
-button.cs-swatch.selected { border-color: #ffffff; }
-
-.cs-toolbar spinbutton {
-  border-radius: 8px;
-  min-height: 26px;
-}
-.cs-toolbar label { color: #c6c7cc; }
-"""
-
-_theme_installed = False
+}}
+.cs-group {{ background-color: {pal['group']}; border-radius: 11px; padding: 3px; }}
+.cs-sep {{ background-color: {pal['sep']}; margin: 4px 6px; }}
+button.cs-tool {{
+  background-image: none; background-color: transparent;
+  color: {pal['tool_fg']}; border: none; box-shadow: none;
+  border-radius: 8px; min-width: 30px; min-height: 28px;
+  margin: 0 1px; padding: 2px 4px;
+}}
+button.cs-tool:hover {{ background-color: {pal['tool_hover']}; }}
+button.cs-tool:checked {{ background-color: {theme_mod.ACCENT}; color: #ffffff; }}
+button.cs-tool:checked:hover {{ background-color: #338cff; }}
+button.cs-swatch {{
+  background-image: none; border: 2px solid transparent; box-shadow: none;
+  border-radius: 11px; min-width: 18px; min-height: 18px; padding: 0; margin: 0 2px;
+}}
+button.cs-swatch:hover {{ border-color: {pal['sep']}; }}
+button.cs-swatch.selected {{ border-color: {ring}; }}
+.cs-toolbar spinbutton {{ border-radius: 8px; min-height: 26px; }}
+.cs-toolbar label {{ color: {pal['label']}; }}
+""".encode()
 
 
-def _install_theme():
-    global _theme_installed
-    if _theme_installed:
-        return
+def _available_fonts():
+    """A short, curated list of clean modern families that are actually
+    installed, plus the generic aliases (always resolvable)."""
+    candidates = ["Sans", "Ubuntu", "Open Sans", "Noto Sans", "Fira Sans",
+                  "Cantarell", "Inter", "Roboto", "Montserrat", "Poppins",
+                  "Lato", "Work Sans", "DejaVu Sans", "Serif", "Monospace"]
+    have = set()
+    try:
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import PangoCairo
+        have = {f.get_name() for f in PangoCairo.FontMap.get_default().list_families()}
+    except Exception:
+        pass
+    out = []
+    for c in candidates:
+        if c in ("Sans", "Serif", "Monospace") or c in have:
+            out.append(c)
+    return out
+
+
+_theme_provider = None
+
+
+def install_theme(dark):
+    """(Re)install the editor CSS for light/dark and set the GTK dark preference
+    so the header/titlebar matches COSMIC."""
+    global _theme_provider
     try:
         from gi.repository import Gdk
-        provider = Gtk.CssProvider()
-        provider.load_from_data(_THEME_CSS)
+        settings = Gtk.Settings.get_default()
+        settings.set_property("gtk-application-prefer-dark-theme", bool(dark))
+        screen = Gdk.Screen.get_default()
+        if _theme_provider is not None:
+            Gtk.StyleContext.remove_provider_for_screen(screen, _theme_provider)
+        _theme_provider = Gtk.CssProvider()
+        _theme_provider.load_from_data(_build_css(theme_mod.palette(dark)))
         Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        _theme_installed = True
+            screen, _theme_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     except Exception:
         pass
 
@@ -140,8 +145,13 @@ class Editor(Gtk.Window):
         self.color = self.cfg["default_color"]
         self.width = float(self.cfg["default_width"])
         self.font_size = float(self.cfg["default_font_size"])
+        self.text_font = self.cfg.get("default_font", "Sans")
         self.blur_block = int(self.cfg.get("pixelate_block", 12))
         self.spotlight_darkness = float(self.cfg.get("spotlight_darkness", 0.6))
+
+        self._dark = theme_mod.is_dark()
+        self._pal = theme_mod.palette(self._dark)
+        self._canvas_bg = self._pal["canvas"]
 
         self._zoom = 1.0          # 1.0 = fit-to-window; >1 zooms in
         self._panx = 0.0          # extra pan offset (widget px) when zoomed
@@ -226,21 +236,17 @@ class Editor(Gtk.Window):
         save_b = Gtk.Button(label="Save")
         save_b.set_tooltip_text("Save PNG (Ctrl+S)")
         save_b.connect("clicked", lambda *_: self.do_save())
-        pin_b = Gtk.Button(label="Pin")
-        pin_b.set_tooltip_text("Pin to screen")
-        pin_b.connect("clicked", lambda *_: self.do_pin())
         self.upload_b = Gtk.Button(label="Upload")
         self.upload_b.set_tooltip_text("Upload and copy a shareable URL (Ctrl+U)")
         self.upload_b.connect("clicked", lambda *_: self.do_upload())
         header.pack_end(copy_b)
         header.pack_end(save_b)
         header.pack_end(self.upload_b)
-        header.pack_end(pin_b)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
 
-        _install_theme()
+        install_theme(self._dark)
 
         # toolbar packed directly so the window is forced at least this wide
         # (tools are always fully visible, never cut off)
@@ -255,10 +261,14 @@ class Editor(Gtk.Window):
         toolbar.pack_start(toolgroup, False, False, 0)
         group = None
         self.tool_buttons = {}
+        self._tool_images = {}
         for key, label, glyph in TOOLS:
             btn = Gtk.RadioButton.new_from_widget(group)
             btn.set_mode(False)  # render as toggle button, not radio dot
-            btn.set_label(glyph)
+            img = Gtk.Image.new_from_pixbuf(icons.pixbuf(key, 18, self._pal["icon"]))
+            btn.set_image(img)
+            btn.set_always_show_image(True)
+            self._tool_images[key] = img
             btn.get_style_context().add_class("cs-tool")
             btn.set_tooltip_text(label)
             btn.connect("toggled", self.on_tool_toggled, key)
@@ -281,9 +291,18 @@ class Editor(Gtk.Window):
         self.thick_ctl.pack_start(self.width_spin, False, False, 0)
         toolbar.pack_start(self.thick_ctl, False, False, 0)
 
-        # font size (only for the Text tool / selected text)
+        # font family + size (only for the Text tool / selected text)
         self.font_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.font_ctl.pack_start(Gtk.Label(label="Font size"), False, False, 0)
+        self._fonts = _available_fonts()
+        self.font_combo = Gtk.ComboBoxText()
+        for fam in self._fonts:
+            self.font_combo.append_text(fam)
+        self.font_combo.set_active(self._fonts.index(self.text_font)
+                                   if self.text_font in self._fonts else 0)
+        self.font_combo.set_tooltip_text("Text font")
+        self.font_combo.connect("changed", self._on_font_family)
+        self.font_ctl.pack_start(self.font_combo, False, False, 0)
+        self.font_ctl.pack_start(Gtk.Label(label="Size"), False, False, 0)
         fadj = Gtk.Adjustment(value=self.font_size, lower=8, upper=160, step_increment=2)
         self.font_spin = Gtk.SpinButton(adjustment=fadj, climb_rate=1, digits=0)
         self.font_spin.set_tooltip_text("Text font size")
@@ -318,9 +337,9 @@ class Editor(Gtk.Window):
         self.blur_ctl.pack_start(self.blur_spin, False, False, 0)
         toolbar.pack_start(self.blur_ctl, False, False, 4)
 
-        # spotlight darkness (only for the Spotlight tool)
+        # spotlight darkness (only when a spotlight is active/selected)
         self.dark_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.dark_ctl.pack_start(Gtk.Label(label="Darkness %"), False, False, 0)
+        self.dark_ctl.pack_start(Gtk.Label(label="Spotlight Darkness"), False, False, 0)
         dadj = Gtk.Adjustment(value=self.spotlight_darkness * 100, lower=0, upper=95,
                               step_increment=5)
         self.dark_spin = Gtk.SpinButton(adjustment=dadj, climb_rate=1, digits=0)
@@ -425,10 +444,12 @@ class Editor(Gtk.Window):
         t = self.tool
         text_ctx = (t == "text" or self.editing_text is not None
                     or isinstance(self.selected, tools.Text))
+        spot_ctx = (t == "spotlight" or isinstance(self.selected, tools.Spotlight))
         self.font_ctl.set_visible(text_ctx)
         self.blur_ctl.set_visible(t == "blur")
-        self.dark_ctl.set_visible(t == "spotlight")
-        self.thick_ctl.set_visible(not text_ctx and t not in ("blur", "spotlight"))
+        self.dark_ctl.set_visible(spot_ctx)
+        self.thick_ctl.set_visible(
+            not text_ctx and not spot_ctx and t != "blur")
 
     def _on_font_changed(self, spin):
         self.font_size = spin.get_value()
@@ -439,6 +460,35 @@ class Editor(Gtk.Window):
             else:
                 self._push_undo()
             sel.size = self.font_size
+            self.canvas.queue_draw()
+
+    def _reapply_theme(self):
+        """React to a live light/dark switch: re-theme chrome, recolour icons."""
+        dark = theme_mod.is_dark()
+        if dark == self._dark:
+            return
+        self._dark = dark
+        self._pal = theme_mod.palette(dark)
+        self._canvas_bg = self._pal["canvas"]
+        install_theme(dark)
+        for key, img in getattr(self, "_tool_images", {}).items():
+            img.set_from_pixbuf(icons.pixbuf(key, 18, self._pal["icon"]))
+        self.canvas.queue_draw()
+
+    def _on_font_family(self, combo):
+        fam = combo.get_active_text()
+        if not fam:
+            return
+        self.text_font = fam
+        tgt = self.editing_text
+        if tgt is None and isinstance(self.selected, tools.Text):
+            tgt = self.selected
+        if isinstance(tgt, tools.Text):
+            if tgt is self.editing_text:
+                self._ensure_edit_undo()
+            else:
+                self._push_undo()
+            tgt.font = fam
             self.canvas.queue_draw()
 
     def _on_blur_changed(self, spin):
@@ -744,8 +794,29 @@ class Editor(Gtk.Window):
             w = self.width if t == "pen" else max(16, self.width * 5)
             col = self.color if t == "pen" else "#ffea00"
             self.draft = cls(points=[(ix, iy)], color=col, width=w)
+            self._hl_raw = [(ix, iy)]  # raw path for the highlighter straight-assist
         self.canvas.queue_draw()
         return True
+
+    # Highlighter assist: snap to a horizontal/vertical straight line unless the
+    # stroke wanders more than this far (image px) off that axis.
+    _HL_SNAP = 22
+
+    def _assist_highlight(self, raw):
+        if len(raw) < 2:
+            return list(raw)
+        x0, y0 = raw[0]
+        xe, ye = raw[-1]
+        horizontal = abs(xe - x0) >= abs(ye - y0)
+        if horizontal:
+            dev = max(abs(p[1] - y0) for p in raw)
+            if dev <= self._HL_SNAP:
+                return [(x0, y0), (xe, y0)]        # clean horizontal
+        else:
+            dev = max(abs(p[0] - x0) for p in raw)
+            if dev <= self._HL_SNAP:
+                return [(x0, y0), (x0, ye)]        # clean vertical
+        return list(raw)                            # forced off-axis -> freehand
 
     def on_canvas_motion(self, _w, ev):
         ix, iy = self.to_image(ev.x, ev.y)
@@ -773,8 +844,11 @@ class Editor(Gtk.Window):
                 self.draft = tools.Blur(x, y, w, h)
             else:
                 self.draft = tools.Spotlight(x, y, w, h, self.spotlight_darkness)
-        elif t in ("pen", "highlight") and self.draft:
+        elif t == "pen" and self.draft:
             self.draft.points.append((ix, iy))
+        elif t == "highlight" and self.draft:
+            self._hl_raw.append((ix, iy))
+            self.draft.points = self._assist_highlight(self._hl_raw)
         elif t == "crop":
             x, y = min(x0, ix), min(y0, iy)
             self.crop_rect = (x, y, abs(ix - x0), abs(iy - y0))
@@ -933,7 +1007,8 @@ class Editor(Gtk.Window):
         shape — selectable, movable, width-resizable via its handles — while you
         type. Font size changes only via the Font size control."""
         self.commit_text()
-        ann = tools.Text(ix, iy, "", self.color, self.font_size, align=self.text_align)
+        ann = tools.Text(ix, iy, "", self.color, self.font_size,
+                         align=self.text_align, font=self.text_font)
         # Start with a roomy box so there's space to type before it auto-grows.
         ann.box_w = max(ann.min_width(), 320.0)
         self.editing_text = ann
@@ -1104,8 +1179,8 @@ class Editor(Gtk.Window):
     # --------------------------------------------------------------- drawing
     def on_canvas_draw(self, _w, cr):
         a = self.canvas.get_allocation()
-        # checkerboard-ish neutral bg
-        cr.set_source_rgb(0.12, 0.12, 0.13)
+        # neutral bg behind the (letterboxed) image, matching light/dark
+        cr.set_source_rgb(*self._canvas_bg)
         cr.rectangle(0, 0, a.width, a.height)
         cr.fill()
         scale, ox, oy = self._layout()
@@ -1359,14 +1434,6 @@ class Editor(Gtk.Window):
             export.notify("Upload failed", err or "")
         return False
 
-    def do_pin(self):
-        # Render now, then close; app.py launches the pin window in a fresh loop.
-        self.pending_pin = self._render()
-        if self.cfg.get("copy_on_save"):
-            export.copy_to_clipboard(self.pending_pin)
-        self._closing = True
-        self.destroy()
-
     def _on_present_signal(self):
         """Another capture was requested while we're open — surface this editor."""
         try:
@@ -1386,6 +1453,14 @@ class Editor(Gtk.Window):
         self.show_all()
         self.crop_bar.hide()
         self._update_tool_controls()  # hide contextual controls show_all revealed
+        # Follow a live light/dark switch while open.
+        try:
+            from gi.repository import Gio
+            self._theme_settings = Gio.Settings.new("org.gnome.desktop.interface")
+            self._theme_settings.connect("changed::color-scheme",
+                                         lambda *_: self._reapply_theme())
+        except Exception:
+            self._theme_settings = None
         # Let a second capture bring this editor to the front (SIGUSR1).
         lock.write_active_pid()
         sig = GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, _signal.SIGUSR1,

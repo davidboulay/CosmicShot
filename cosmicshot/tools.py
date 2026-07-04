@@ -76,19 +76,33 @@ class Arrow(Annotation):
     handle_style = "endpoints"
 
     def draw(self, cr, ctx):
+        dx, dy = self.x1 - self.x0, self.y1 - self.y0
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+        ang = math.atan2(dy, dx)
+        w = self.width
+        head_len = max(11, w * 3.4)     # length of the filled head
+        head_w = max(7, w * 2.1)        # half-width of the head base
         _set_color(cr, self.color)
-        cr.set_line_width(self.width)
-        cr.set_line_cap(1)  # round
+        cr.set_line_cap(1)
+        cr.set_line_join(1)
+        # shaft: stop just inside the head base so the join looks clean
+        shaft_end = max(0.0, length - head_len * 0.85)
+        cr.set_line_width(w)
         cr.move_to(self.x0, self.y0)
-        cr.line_to(self.x1, self.y1)
+        cr.line_to(self.x0 + math.cos(ang) * shaft_end,
+                   self.y0 + math.sin(ang) * shaft_end)
         cr.stroke()
-        ang = math.atan2(self.y1 - self.y0, self.x1 - self.x0)
-        head = max(12, self.width * 3.5)
-        for da in (math.radians(28), -math.radians(28)):
-            cr.move_to(self.x1, self.y1)
-            cr.line_to(self.x1 - head * math.cos(ang - da),
-                       self.y1 - head * math.sin(ang - da))
-        cr.stroke()
+        # filled triangular head
+        bx = self.x1 - math.cos(ang) * head_len
+        by = self.y1 - math.sin(ang) * head_len
+        px, py = math.cos(ang + math.pi / 2), math.sin(ang + math.pi / 2)
+        cr.move_to(self.x1, self.y1)
+        cr.line_to(bx + px * head_w, by + py * head_w)
+        cr.line_to(bx - px * head_w, by - py * head_w)
+        cr.close_path()
+        cr.fill()
 
     def bbox(self):
         x, y = min(self.x0, self.x1), min(self.y0, self.y1)
@@ -341,6 +355,7 @@ class Text(Annotation):
     color: str = "#ff3b30"
     size: float = 28
     align: str = "left"
+    font: str = "Sans"
     box_w: Optional[float] = None
     _w: float = 0.0   # last rendered text width  (cache for bbox / handles)
     _h: float = 0.0   # last rendered text height (cache for bbox / handles)
@@ -355,7 +370,7 @@ class Text(Annotation):
         update the cached rendered size. Returns the layout."""
         layout = PangoCairo.create_layout(cr)
         fd = Pango.FontDescription()
-        fd.set_family("Sans")
+        fd.set_family(self.font or "Sans")
         fd.set_weight(Pango.Weight.BOLD)
         fd.set_absolute_size(self.size * Pango.SCALE)
         layout.set_font_description(fd)

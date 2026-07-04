@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
-VERSION = "1.2.0"                       # single source of truth; matches the git tag
+VERSION = "1.3.0"                       # single source of truth; matches the git tag
 GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.
@@ -35,6 +35,7 @@ DEFAULTS = {
     "default_color": "#ff3b30",   # CleanShot-ish red
     "default_width": 4,
     "default_font_size": 28,
+    "default_font": "Sans",
     # Palette shown in the toolbar.
     "palette": [
         "#ff3b30",  # red
