@@ -6,10 +6,15 @@ A **CleanShot X-style** screenshot, **screen-recording** + annotation tool for
 The stock COSMIC screenshot tool captures fine but can't annotate on the spot.
 CosmicShot fills that gap: drag-select a region over a dimmed desktop, land
 straight in an editor to draw arrows, boxes, text, blur sensitive bits, add
-numbered steps — and **copy, save, or pin**. It also records video, takes
-scrolling screenshots, and lives in your panel as a tray icon.
+numbered steps — and **copy, save, or upload a shareable link**. It also records
+video, takes scrolling screenshots, and lives in your panel as a tray icon.
 
-![CosmicShot in action](docs/cosmicshot-screenshot.png)
+![The CosmicShot annotation editor](docs/editor.png)
+
+<p align="center">
+  <img src="docs/menu.png" alt="CosmicShot panel tray menu" width="360">
+</p>
+<p align="center"><em>Capture, record, and settings — one click from the panel.</em></p>
 
 ## Features
 
