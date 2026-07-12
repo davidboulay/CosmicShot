@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
-VERSION = "1.3.0"                       # single source of truth; matches the git tag
+VERSION = "1.3.1"                       # single source of truth; matches the git tag
 GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.
@@ -53,6 +53,10 @@ DEFAULTS = {
     "auto_copy_on_capture": False,
     # After Save, also copy to clipboard.
     "copy_on_save": True,
+    # Show a system notification for routine, self-evident actions (copy, save).
+    # Off by default — the action is instant and the window closes, so the toast
+    # is just noise. Errors and async results (upload, recording) always notify.
+    "notify_on_action": False,
     # Drop shadow / margin added around exported image (CleanShot signature look). 0 to disable.
     "export_padding": 0,
     "export_bg": "#00000000",  # transparent padding background

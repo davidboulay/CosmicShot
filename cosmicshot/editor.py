@@ -1394,7 +1394,12 @@ class Editor(Gtk.Window):
     def do_copy(self):
         surface = self._render()
         ok = export.copy_to_clipboard(surface)
-        export.notify("Copied to clipboard" if ok else "Copy failed")
+        # Copy is instant and the window closes — only surface a failure. The
+        # success toast is opt-in (notify_on_action).
+        if not ok:
+            export.notify("Copy failed")
+        elif self.cfg.get("notify_on_action"):
+            export.notify("Copied to clipboard")
         self._closing = True
         self.destroy()
 
@@ -1403,7 +1408,8 @@ class Editor(Gtk.Window):
         path = export.save_to_disk(surface, self.cfg)
         if self.cfg.get("copy_on_save"):
             export.copy_to_clipboard(surface)
-        export.notify("Screenshot saved", path, path)
+        if self.cfg.get("notify_on_action"):
+            export.notify("Screenshot saved", path, path)
         self._closing = True
         self.destroy()
 
@@ -1413,8 +1419,7 @@ class Editor(Gtk.Window):
         surface = self._render()
         data = export.surface_to_png_bytes(surface)
         self.upload_b.set_sensitive(False)
-        self.upload_b.set_label("Uploading…")
-        export.notify("Uploading screenshot…")
+        self.upload_b.set_label("Uploading…")  # the button is the progress cue
 
         def work():
             try:
