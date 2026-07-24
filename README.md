@@ -61,20 +61,32 @@ video, takes scrolling screenshots, and lives in your panel as a tray icon.
 CosmicShot relies on `cosmic-screenshot` (ships with the COSMIC desktop) for the
 screen grab. Screen recording additionally uses PipeWire + GStreamer (see below).
 
-### Recommended — `.deb` package (Pop!_OS / Ubuntu)
+### Recommended — APT repository (auto-updates via `apt upgrade`)
 
-Download the latest `cosmicshot_*.deb` from the
-[**Releases page**](https://github.com/davidboulay/CosmicShot/releases/latest), then:
+Add the signed CosmicShot APT repo once, then install and stay current with the
+rest of your system:
 
 ```bash
-sudo apt install ./cosmicshot_1.1.0_all.deb
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://davidboulay.github.io/CosmicShot/cosmicshot-archive-keyring.gpg \
+  -o /etc/apt/keyrings/cosmicshot.gpg
+echo "deb [signed-by=/etc/apt/keyrings/cosmicshot.gpg] https://davidboulay.github.io/CosmicShot stable main" \
+  | sudo tee /etc/apt/sources.list.d/cosmicshot.list
+sudo apt update
+sudo apt install cosmicshot
 ```
 
-`apt` pulls in the dependencies automatically. This installs the `cosmicshot`
-command, a desktop entry, icons, and a login autostart for the panel tray icon.
-Launch **CosmicShot** from the app grid or bind a hotkey (see Settings).
+New versions then arrive with `sudo apt upgrade`. (The app also self-updates from
+GitHub Releases if you prefer — Settings → Check for updates.)
 
-Remove it with `sudo apt remove cosmicshot`.
+### Alternative — single `.deb`
+
+Download the latest `cosmicshot_*.deb` from the
+[**Releases page**](https://github.com/davidboulay/CosmicShot/releases/latest), then
+`sudo apt install ./cosmicshot_*.deb`.
+
+Either way you get the `cosmicshot` command, a desktop entry, icons, and a login
+autostart for the panel tray icon. Remove it with `sudo apt remove cosmicshot`.
 
 ### Alternative — per-user script (no root)
 
