@@ -1,0 +1,335 @@
+Package: cosmicshot
+Architecture: all
+Version: 1.0.0
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 460
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.0.0_all.deb
+Size: 90352
+MD5sum: fc9868cf07c9b9f8f754cd83506b2d31
+SHA1: 9f661f7a63c7ba2d8d461266ff08784a95cc140f
+SHA256: e3f00165d499b1165d1215620aa3d37ac818f837e3aa6087f3fc5de393fb8dff
+SHA512: c4edb8c481b631ae49238708a345ccc1326b3e9e1bf2ef8ab0cf052bad1632bb53e983fbcbd8a9795c86081dd2621b87788670f634d8ea2426d57d9603dfc5cc
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot capture & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot tool for the COSMIC desktop (Pop!_OS) and
+ other wlroots-style Wayland compositors. It offers region, full-screen and
+ per-app-window capture, an annotation editor (arrows, text, shapes, blur,
+ highlight, crop), scrolling screenshots, a pinned floating preview, and a
+ panel tray icon with a capture menu.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot), which ships with
+ the COSMIC desktop, plus an AppIndicator library for the tray icon.
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.0
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 544
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.0_all.deb
+Size: 118592
+MD5sum: fb4969381fbe804a653f4eca0a61c135
+SHA1: 199934276c4ee64aec2d55f9c6e85970426f23e4
+SHA256: d415bf9bb2eb7e81dd635b28f6b3e78350e9c7b679d5088b03f60cf782dcfa32
+SHA512: 40aeee13fac97f52e5d5716e4828dafe30aa99ef66f01a4f6c340eb26f0833cc5263db3b1cbc012d31f6746511ccd29798fd1b156604f1512441c1cfa60640fc
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.2
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 540
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.2_all.deb
+Size: 119112
+MD5sum: d5f355beab2a1785e14c13d5ad47f051
+SHA1: 2d506abab9a970d278c62bbc94ca395de975ef4f
+SHA256: 2cc62505c1f7f4fa11e95f93ad702bab6678d759e3b0424283fc7ad2c43e21cb
+SHA512: c8bdfc2d8a31b3ad6c1b4efdddb98309a4839ad3178097c0578e8334872d3e2ea912dd102badcabe97bec266ad9350361f0a7d946d087249662ff9a67fb2057f
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.3
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 540
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.3_all.deb
+Size: 119174
+MD5sum: 473b380ee509fd2fa1b5939f3859bd64
+SHA1: 87d7a7220a44bb03d23cf9496739b3481c608981
+SHA256: e4497f4e274f111f585c95f9042b2c18542bf2f6dbf764426c17a6d972c8363c
+SHA512: cfdbfd4b79febea0a8b5f6c54fbf3a857283f6e45606e814ebcccaf68838ebe9a783ba17c59d464c5ad8a5c42fd834ddf0bffeaf936ea1cca824330e983316c4
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.4
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 540
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.4_all.deb
+Size: 119176
+MD5sum: 1702f401e6a1ab35dc208401090a3a8c
+SHA1: ae40c0489862643102e79c7739ffd86002ab9f97
+SHA256: 1c3a3a3aa2f648f1757053928f58971856dcf37c6adf4db179cd16fdd011bffc
+SHA512: 8356a57d3f623051fdab417888fb5ea99ad3765a8bc248352f5a585d768b0cec51d39c1b5ff6081505adb79d77569a7c244b2dcb5eb83e41dead81effc641750
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.5
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 540
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.5_all.deb
+Size: 119298
+MD5sum: a9662d36daf51e7ee9422507f51d8914
+SHA1: 6608168cf1f00508e6a5c163bd4d96e0ba648ab4
+SHA256: fa80c4861f2501ef8cd8bc6182faf28559c26573cfd22219a65b549322444991
+SHA512: 772b13494369c6c0bc9f609d51647a8f58679e48803fc91cf123ad0949e0ce9be27dd424348a3b27fdb428e93c1cacd073957006e7ed5df68a6c8d56d48327d3
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.1.6
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 540
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.1.6_all.deb
+Size: 119262
+MD5sum: ad9e56652b110a7395843dd0d91f2b5c
+SHA1: 9ebcc27ae01eecfde90f2b4cfb988bf65bda381d
+SHA256: 5a5150381079071802270db3ee75346a638388b1e104d545414ca893fe1fca52
+SHA512: 522831ea099d4b166086cfd82756092716c74f5415a367a45ca73ac8babfcde3091b2c206a542a97a7e547d1a0d5240e26dccdeddc905dd771cf2cac27b98169
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.2.0
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 548
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.2.0_all.deb
+Size: 120160
+MD5sum: 01e76a6c536ba1b2dd03f72323ac8aef
+SHA1: d33cc66bee393f71e3173fb80ffb44fe5e69ad62
+SHA256: f21b4ea81688245d473042e34253fea360c77d208617a7bc9d7d2fa22a90aaef
+SHA512: f6ba6d7a7da4b0a9479a9110a45753a95aa7e179d7ac788f022d3fd11e5a2cba81c6261f996b94c5bc5e2fd1809febcad3d94ebae964d1a51492808f5a1f4704
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.3.0
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 564
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.3.0_all.deb
+Size: 123106
+MD5sum: 7b5b10c415cd0b2038f9cb7b21bb8d74
+SHA1: 5c82c4bff95033c2f35853489219d7cc630c92a3
+SHA256: 62980b47e6ef32f070484782c5810328bbfbb2b6679a745ef2a5e35c4130a7dd
+SHA512: a0852171a7b57d914d05c04560676113a661c089e82ee42781f0722c53e1eccdb29078424eefa929251bd79590e6c21604a3db546613ad16814285950584937a
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.3.1
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 564
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.3.1_all.deb
+Size: 123306
+MD5sum: fe93a57f9d67b511411959c4d51a9605
+SHA1: c60e69730f33160d53d3f9c48d8bd5a5d6b1a47c
+SHA256: d598a2e305cda336a7d3f83928d701fcc7b6bdee7bad5e89c15dd838bc84b856
+SHA512: ad0498a81587947bbd9293ee3cb541b929f696c7fed354f114f00ac58cef857d503e15699a64c6d6d2b659707152cb5f9cf9ed041c0bb1a93c96c53945447207
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.3.2
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 564
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.3.2_all.deb
+Size: 123352
+MD5sum: 84ecf67383369a6a2af993686d24a7f5
+SHA1: 7661a0c51d20e6973daf3f08b16c92a41d654795
+SHA256: 67b2081cd52c1eb8250916f66a3e03f4e750ca65a543be66cb394e9352c2bd18
+SHA512: e21532eed4ab2125e6c863a7cf0c066fe8d0271636222c6a718a74b1df1b0e9e7195d7034c35982f2dcbbbc0a0bd925d47c29c0da2f2b32c01cc525f9ea954a7
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
+Package: cosmicshot
+Architecture: all
+Version: 1.3.3
+Priority: optional
+Section: graphics
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 564
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+Suggests: gcc, libwayland-dev, wayland-protocols
+Filename: pool/main/cosmicshot_1.3.3_all.deb
+Size: 123740
+MD5sum: 8e5077ebaa0cb586e53e2c6e400444e7
+SHA1: 86571944f4f1a83e0b3f78a7d061c1187426e3e3
+SHA256: 54a13eab05ee40ba21b37d02a59b3cfb62d05d873bf1336999d7cf8a5d819edf
+SHA512: 53ab0c42afa76cf80f904e1f9fd06d4d945462825f2dabe13e9efa3dd943faf25051f6dd14f5346bb198dada649efdba5aa0e8c4aa17f817e8eec02de33d02f0
+Homepage: https://github.com/davidboulay/CosmicShot
+Description: CleanShot-style screenshot, screen-recording & annotation for COSMIC/Wayland
+ CosmicShot is a fast screenshot and screen-recording tool for the COSMIC
+ desktop (Pop!_OS) and other Wayland compositors. Region / screen / window
+ capture, an annotation editor (arrows, text, shapes, blur, highlight, crop),
+ scrolling screenshots, MP4 screen recording (with optional audio), a pinned
+ floating preview, a panel tray icon, and a settings panel with one-click
+ updates and global shortcuts.
+ .
+ Requires the COSMIC screenshot backend (cosmic-screenshot). Recording needs
+ PipeWire + GStreamer (pulled in as recommended packages).
+
