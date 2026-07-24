@@ -506,7 +506,11 @@ class RecordingSession:
         for edge, margin in anchors:
             GtkLayerShell.set_anchor(win, edge, True)
             GtkLayerShell.set_margin(win, edge, max(0, int(margin)))
-        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        # ON_DEMAND (not EXCLUSIVE): the control takes the keyboard only while
+        # it's focused, so panel menus / other windows can still be opened during
+        # a recording. EXCLUSIVE held a global keyboard grab that dismissed any
+        # menu the moment it tried to open.
+        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND)
 
         prov = Gtk.CssProvider()
         prov.load_from_data(
