@@ -16,6 +16,25 @@ video, takes scrolling screenshots, and lives in your panel as a tray icon.
 </p>
 <p align="center"><em>Capture, record, and settings — one click from the panel.</em></p>
 
+## Install
+
+**Pop!_OS / COSMIC — add the signed APT repository** (recommended). You then
+install and stay updated with the rest of your system:
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://davidboulay.github.io/CosmicShot/cosmicshot-archive-keyring.gpg \
+  -o /etc/apt/keyrings/cosmicshot.gpg
+echo "deb [signed-by=/etc/apt/keyrings/cosmicshot.gpg] https://davidboulay.github.io/CosmicShot stable main" \
+  | sudo tee /etc/apt/sources.list.d/cosmicshot.list
+sudo apt update && sudo apt install cosmicshot
+```
+
+New versions then arrive automatically with `sudo apt upgrade`. Requires the
+COSMIC desktop (`cosmic-screenshot`); screen recording also needs PipeWire +
+GStreamer (see [Screen-recording dependencies](#screen-recording-dependencies)).
+Prefer not to add a repo? See [Other ways to install](#other-ways-to-install).
+
 ## Features
 
 - **Dimmed region selector** — drag to select with a live `W × H` readout,
@@ -51,44 +70,25 @@ video, takes scrolling screenshots, and lives in your panel as a tray icon.
 - **Close confirmation** — closing with unsaved edits asks Save / Discard / Cancel.
 - **Cloud upload** — one click uploads and copies a shareable URL to your
   clipboard (default host: catbox.moe — free, no account, permanent). `Ctrl+U`.
-- **Copy to clipboard**, **Save PNG**, or **Pin to screen** (floating,
-  always-on-top; scroll to resize, drag to move, `Esc`/double-click to dismiss).
+- **Copy to clipboard** or **Save PNG** — `Ctrl+C` / `Ctrl+S`.
 - **Settings** — version, one-click updates, and global keyboard shortcuts.
 - **Panel tray icon** with a capture/record menu, auto-started at login.
 
-## Install
+## Other ways to install
 
-CosmicShot relies on `cosmic-screenshot` (ships with the COSMIC desktop) for the
-screen grab. Screen recording additionally uses PipeWire + GStreamer (see below).
+The [APT repository](#install) above is the recommended way. Alternatives:
 
-### Recommended — APT repository (auto-updates via `apt upgrade`)
-
-Add the signed CosmicShot APT repo once, then install and stay current with the
-rest of your system:
-
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSL https://davidboulay.github.io/CosmicShot/cosmicshot-archive-keyring.gpg \
-  -o /etc/apt/keyrings/cosmicshot.gpg
-echo "deb [signed-by=/etc/apt/keyrings/cosmicshot.gpg] https://davidboulay.github.io/CosmicShot stable main" \
-  | sudo tee /etc/apt/sources.list.d/cosmicshot.list
-sudo apt update
-sudo apt install cosmicshot
-```
-
-New versions then arrive with `sudo apt upgrade`. (The app also self-updates from
-GitHub Releases if you prefer — Settings → Check for updates.)
-
-### Alternative — single `.deb`
+### Single `.deb` download
 
 Download the latest `cosmicshot_*.deb` from the
 [**Releases page**](https://github.com/davidboulay/CosmicShot/releases/latest), then
-`sudo apt install ./cosmicshot_*.deb`.
+`sudo apt install ./cosmicshot_*.deb`. You won't get automatic `apt upgrade`s this
+way, but the in-app updater (Settings → Check for updates) still works.
 
 Either way you get the `cosmicshot` command, a desktop entry, icons, and a login
 autostart for the panel tray icon. Remove it with `sudo apt remove cosmicshot`.
 
-### Alternative — per-user script (no root)
+### Per-user script (no root)
 
 ```bash
 sudo apt install python3-gi python3-gi-cairo python3-pil \
