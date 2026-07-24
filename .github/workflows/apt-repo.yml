@@ -1,0 +1,78 @@
+name: Publish APT repository
+
+# Rebuilds the signed APT repo (all released .debs) and publishes it to the
+# gh-pages branch, which GitHub Pages serves at
+# https://davidboulay.github.io/CosmicShot
+on:
+  release:
+    types: [published, edited, deleted]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the gh-pages branch
+
+concurrency:
+  group: apt-repo
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev gnupg
+
+      - name: Collect released .deb assets
+        run: |
+          mkdir -p site/pool/main
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName'); do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern '*.deb' --dir site/pool/main --skip-existing || true
+          done
+          echo "Collected:"; ls -1 site/pool/main || true
+          test -n "$(ls -A site/pool/main 2>/dev/null)" || { echo "No .deb assets found"; exit 1; }
+
+      - name: Build package index + Release
+        working-directory: site
+        run: |
+          mkdir -p dists/stable/main/binary-all
+          apt-ftparchive packages pool/main > dists/stable/main/binary-all/Packages
+          gzip -kf dists/stable/main/binary-all/Packages
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=CosmicShot \
+            -o APT::FTPArchive::Release::Label=CosmicShot \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures=all \
+            release dists/stable > dists/stable/Release
+
+      - name: Sign the repository
+        working-directory: site
+        run: |
+          export GNUPGHOME="$(mktemp -d)"
+          echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+          gpg --batch --yes --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes -abs -o dists/stable/Release.gpg dists/stable/Release
+
+      - name: Add public key, landing page, .nojekyll
+        run: |
+          cp apt/cosmicshot-archive-keyring.gpg site/cosmicshot-archive-keyring.gpg
+          touch site/.nojekyll
+          cp apt/index.html site/index.html 2>/dev/null || true
+
+      - name: Publish to gh-pages
+        run: |
+          cd site
+          git init -q
+          git checkout -q -b gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "APT repo: $(date -u +%FT%TZ)"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
