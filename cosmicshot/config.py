@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
-VERSION = "1.3.2"                       # single source of truth; matches the git tag
+VERSION = "1.3.3"                       # single source of truth; matches the git tag
 GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.
@@ -71,9 +71,12 @@ DEFAULTS = {
     "upload_field": "fileToUpload",
     "upload_extra": {"reqtype": "fileupload"},
     "upload_expires": None,   # optional retention in hours (host-dependent)
-    # Updates: check GitHub Releases on launch + periodically, notify, and offer
-    # one-click install of the .deb (pkexec).
-    "auto_update": False,
+    # Updates: check GitHub Releases on launch + hourly and prompt with a
+    # one-click Install dialog. On by default so users don't have to dig into
+    # Settings to discover updates.
+    "auto_update": True,
+    # Last version we already prompted about, so we ask once per version.
+    "update_prompted_version": "",
     # Global keyboard shortcuts written into COSMIC's custom-shortcuts config.
     # Maps an action id -> accelerator string like "Super+Shift+S" ("" = unset).
     # Empty by default; set them in Settings.

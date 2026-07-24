@@ -196,17 +196,16 @@ def run_tray(cfg=None):
                          lambda: (_apply_state(ind), True)[1])
     _apply_state(ind)  # in case a recording is already running
 
-    # Auto-update: check shortly after launch, then periodically, and notify
-    # (only when enabled in Settings). The install itself is one-click in
-    # Settings → "Update now".
+    # Auto-update: check shortly after launch, then hourly, and prompt the user
+    # directly with a one-click Install dialog (no Settings trip needed).
     GLib.timeout_add_seconds(10, lambda: (_check_updates(), False)[1])
-    GLib.timeout_add_seconds(6 * 3600, lambda: (_check_updates(), True)[1])
+    GLib.timeout_add_seconds(3600, lambda: (_check_updates(), True)[1])
 
     Gtk.main()
 
 
 def _check_updates():
-    """If auto-update is on, check GitHub in the background and notify when a
+    """If auto-update is on, check GitHub in the background and prompt when a
     newer release is available."""
     if not config.load().get("auto_update"):
         return
@@ -214,14 +213,61 @@ def _check_updates():
 
     def work():
         try:
-            from . import updates, export
+            from . import updates
             info = updates.available()
         except Exception:
             return
         if info:
+            GLib.idle_add(lambda: (_prompt_update(info), False)[1])
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _prompt_update(info):
+    """Show an explicit Install / Later dialog — once per version."""
+    from . import config as _cfg
+    cfg = _cfg.load()
+    if cfg.get("update_prompted_version") == info["version"]:
+        return  # already asked about this one; don't nag every hour
+    cfg["update_prompted_version"] = info["version"]
+    _cfg.save(cfg)
+
+    dlg = Gtk.MessageDialog(
+        transient_for=None, modal=False, message_type=Gtk.MessageType.INFO,
+        text=f"CosmicShot {info['version']} is available")
+    dlg.format_secondary_text(
+        f"You're on {config.VERSION}. Install the update now? "
+        "You'll be asked for your password, then the app restarts.")
+    dlg.add_button("Later", Gtk.ResponseType.CANCEL)
+    inst = dlg.add_button("Install now", Gtk.ResponseType.ACCEPT)
+    inst.get_style_context().add_class("suggested-action")
+    dlg.set_default_response(Gtk.ResponseType.ACCEPT)
+    dlg.set_keep_above(True)
+    dlg.connect("response", _on_prompt_response, info)
+    dlg.show()
+
+
+def _on_prompt_response(dlg, resp, info):
+    dlg.destroy()
+    if resp == Gtk.ResponseType.ACCEPT:
+        _install_update(info)
+
+
+def _install_update(info):
+    import threading
+    from . import updates, export
+
+    def work():
+        path = updates.download_deb(info.get("deb_url"))
+        if not path:
             GLib.idle_add(lambda: (export.notify(
-                "CosmicShot update available",
-                f"Version {info['version']} is available — open Settings to update."),
-                False)[1])
+                "CosmicShot", "Couldn't download the update."), False)[1])
+            return
+        ok, msg = updates.install_deb(path)   # pkexec password prompt
+        if ok:
+            GLib.idle_add(lambda: (updates.relaunch(), False)[1])  # re-exec new tray
+        else:
+            GLib.idle_add(lambda: (export.notify(
+                "CosmicShot — update failed", msg or ""), False)[1])
 
     threading.Thread(target=work, daemon=True).start()
