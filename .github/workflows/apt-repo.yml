@@ -60,9 +60,10 @@ jobs:
           gpg --batch --yes --clearsign -o dists/stable/InRelease dists/stable/Release
           gpg --batch --yes -abs -o dists/stable/Release.gpg dists/stable/Release
 
-      - name: Add public key, landing page, .nojekyll
+      - name: Add public key, installer, landing page, .nojekyll
         run: |
           cp apt/cosmicshot-archive-keyring.gpg site/cosmicshot-archive-keyring.gpg
+          cp apt/site-install.sh site/install.sh
           touch site/.nojekyll
           cp apt/index.html site/index.html 2>/dev/null || true
 

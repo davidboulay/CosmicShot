@@ -18,8 +18,16 @@ video, takes scrolling screenshots, and lives in your panel as a tray icon.
 
 ## Install
 
-**Pop!_OS / COSMIC — add the signed APT repository** (recommended). You then
-install and stay updated with the rest of your system:
+**Pop!_OS / COSMIC** — one line adds the signed APT repository and installs:
+
+```bash
+curl -fsSL https://davidboulay.github.io/CosmicShot/install.sh | sudo bash
+```
+
+New versions then arrive automatically with `sudo apt upgrade`.
+
+<details>
+<summary>Prefer to run the steps yourself?</summary>
 
 ```bash
 sudo install -d -m 0755 /etc/apt/keyrings
@@ -29,11 +37,11 @@ echo "deb [signed-by=/etc/apt/keyrings/cosmicshot.gpg] https://davidboulay.githu
   | sudo tee /etc/apt/sources.list.d/cosmicshot.list
 sudo apt update && sudo apt install cosmicshot
 ```
+</details>
 
-New versions then arrive automatically with `sudo apt upgrade`. Requires the
-COSMIC desktop (`cosmic-screenshot`); screen recording also needs PipeWire +
-GStreamer (see [Screen-recording dependencies](#screen-recording-dependencies)).
-Prefer not to add a repo? See [Other ways to install](#other-ways-to-install).
+Requires the COSMIC desktop (`cosmic-screenshot`); screen recording also needs
+PipeWire + GStreamer (see [Screen-recording dependencies](#screen-recording-dependencies)).
+No-repo options are in [Other ways to install](#other-ways-to-install).
 
 ## Features
 
