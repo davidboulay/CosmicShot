@@ -62,8 +62,12 @@ def mode_region(cfg):
 
 
 def _edit_region(shot_path, rect, cfg):
-    x, y, w, h = rect
-    img = Image.open(shot_path).convert("RGBA").crop((x, y, x + w, y + h))
+    img = Image.open(shot_path).convert("RGBA")
+    # The rect is logical desktop coords; the PNG is device pixels, so at a
+    # fractional display scale the crop must be scaled into image space first.
+    x, y, w, h = capture.ImageMap(img.width, img.height).rect(*rect)
+    img = img.crop((max(0, x), max(0, y),
+                    min(x + w, img.width), min(y + h, img.height)))
     if cfg.get("auto_copy_on_capture"):
         from .imaging import pil_to_surface
         surf, _buf = pil_to_surface(img)
@@ -80,9 +84,10 @@ def mode_full(cfg):
     if m is None:
         return  # cancelled
     img = Image.open(shot_path).convert("RGBA")
-    x0, y0, x1, y1 = m.bounds
-    img = img.crop((max(0, x0), max(0, y0),
-                    min(x1, img.width), min(y1, img.height)))
+    x, y, w, h = capture.ImageMap(img.width, img.height, monitors).rect(
+        m.x, m.y, m.width, m.height)
+    img = img.crop((max(0, x), max(0, y),
+                    min(x + w, img.width), min(y + h, img.height)))
     _run_editor(img, cfg)
 
 
@@ -106,8 +111,8 @@ def mode_window(cfg):
     rect = WindowPicker(shot_path, monitors, wins).run()
     if not rect:
         return  # cancelled
-    x, y, w, h = rect
     full = Image.open(shot_path).convert("RGBA")
+    x, y, w, h = capture.ImageMap(full.width, full.height, monitors).rect(*rect)
     img = full.crop((max(0, x), max(0, y),
                      min(x + w, full.width), min(y + h, full.height)))
     _run_editor(img, cfg)

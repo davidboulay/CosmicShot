@@ -1,13 +1,20 @@
 """Full-screen dimmed region selector (CleanShot-style).
 
 Captures the whole desktop first, then paints it under a dim layer-shell overlay
-on each monitor. The user drags a rectangle; we return it in image-pixel space.
+on each monitor. The user drags a rectangle; we return it in logical desktop
+coordinates (convert to PNG pixels with capture.ImageMap before cropping).
+
+The preview must paint the PNG (device pixels) into a widget sized in logical
+pixels, so every surface draw goes through the ImageMap ratio; picking and
+results stay logical throughout.
 """
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GtkLayerShell, GLib  # noqa: E402
 import cairo  # noqa: E402
+
+from .capture import ImageMap  # noqa: E402
 
 DIM = (0, 0, 0, 0.45)
 ACCENT = (0.0, 0.48, 1.0)  # selection border
@@ -37,11 +44,12 @@ def dismiss_popups(settle_ms=220):
 
 
 class _MonitorOverlay(Gtk.Window):
-    def __init__(self, controller, monitor, gdk_monitor, surface):
+    def __init__(self, controller, monitor, gdk_monitor, surface, imap):
         super().__init__()
         self.controller = controller
         self.m = monitor
         self.surface = surface  # full-desktop cairo surface (image-pixel space)
+        self.imap = imap
 
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_monitor(self, gdk_monitor)
@@ -65,37 +73,37 @@ class _MonitorOverlay(Gtk.Window):
 
         self.pointer = None  # widget coords for crosshair
 
-    # --- coordinate helpers (widget <-> image pixel space) ---
+    # --- coordinate helpers (widget <-> logical desktop space) ---
     def _scale(self):
         a = self.area.get_allocation()
         sx = a.width / self.m.width if self.m.width else 1
         sy = a.height / self.m.height if self.m.height else 1
         return sx or 1, sy or 1
 
-    def to_image(self, wx, wy):
+    def to_logical(self, wx, wy):
         sx, sy = self._scale()
         return self.m.x + wx / sx, self.m.y + wy / sy
 
-    def to_widget(self, ix, iy):
+    def to_widget(self, lx, ly):
         sx, sy = self._scale()
-        return (ix - self.m.x) * sx, (iy - self.m.y) * sy
+        return (lx - self.m.x) * sx, (ly - self.m.y) * sy
 
     # --- input ---
     def on_press(self, _w, ev):
         if ev.button == 1:
-            self.controller.begin(self, *self.to_image(ev.x, ev.y))
+            self.controller.begin(self, *self.to_logical(ev.x, ev.y))
         return True
 
     def on_motion(self, _w, ev):
         self.pointer = (ev.x, ev.y)
         if self.controller.dragging:
-            self.controller.update(*self.to_image(ev.x, ev.y))
+            self.controller.update(*self.to_logical(ev.x, ev.y))
         self.controller.queue_redraw()
         return True
 
     def on_release(self, _w, ev):
         if ev.button == 1 and self.controller.dragging:
-            self.controller.update(*self.to_image(ev.x, ev.y))
+            self.controller.update(*self.to_logical(ev.x, ev.y))
             self.controller.finish()
         return True
 
@@ -110,11 +118,16 @@ class _MonitorOverlay(Gtk.Window):
     def on_draw(self, _w, cr):
         a = self.area.get_allocation()
         sx, sy = self._scale()
+        # The PNG is in device pixels, the widget in logical pixels: scale the
+        # surface by widget-px-per-IMAGE-px and offset by the monitor's origin
+        # in image px, so its slice fills the widget exactly.
+        isx, isy = sx / self.imap.rx, sy / self.imap.ry
+        ox, oy = self.m.x * self.imap.rx, self.m.y * self.imap.ry
 
         # 1. base screenshot for this monitor's slice
         cr.save()
-        cr.scale(sx, sy)
-        cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+        cr.scale(isx, isy)
+        cr.set_source_surface(self.surface, -ox, -oy)
         cr.get_source().set_filter(cairo.FILTER_FAST)
         cr.paint()
         cr.restore()
@@ -124,7 +137,7 @@ class _MonitorOverlay(Gtk.Window):
         cr.rectangle(0, 0, a.width, a.height)
         cr.fill()
 
-        sel = self.controller.selection_image_rect()
+        sel = self.controller.selection_rect()
         if sel:
             ix, iy, iw, ih = sel
             wx, wy = self.to_widget(ix, iy)
@@ -133,8 +146,8 @@ class _MonitorOverlay(Gtk.Window):
             cr.save()
             cr.rectangle(wx, wy, ww, wh)
             cr.clip()
-            cr.scale(sx, sy)
-            cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+            cr.scale(isx, isy)
+            cr.set_source_surface(self.surface, -ox, -oy)
             cr.paint()
             cr.restore()
             # 4. border + handles + dimensions
@@ -143,7 +156,9 @@ class _MonitorOverlay(Gtk.Window):
             cr.rectangle(wx, wy, ww, wh)
             cr.stroke()
             self._draw_handles(cr, wx, wy, ww, wh)
-            self._draw_dims(cr, wx, wy, ww, wh, iw, ih)
+            # The label shows the size of the image this will crop (device px).
+            self._draw_dims(cr, wx, wy, ww, wh,
+                            iw * self.imap.rx, ih * self.imap.ry)
         elif self.pointer:
             # crosshair before first drag
             cr.set_source_rgba(1, 1, 1, 0.6)
@@ -212,27 +227,31 @@ class _MonitorOverlay(Gtk.Window):
 
 
 class SelectionOverlay:
-    """Runs the overlay across all monitors and returns the chosen rect."""
+    """Runs the overlay across all monitors and returns the chosen rect in
+    logical desktop coordinates (convert with capture.ImageMap to crop the
+    PNG)."""
 
     def __init__(self, screenshot_path, monitors):
         self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
+        self.imap = ImageMap(self.surface.get_width(),
+                             self.surface.get_height(), monitors)
         self.monitors = monitors
         self.windows = []
         self.dragging = False
         self.start = None
         self.cur = None
-        self.result = None  # (x, y, w, h) in image-pixel space
+        self.result = None  # (x, y, w, h) in logical desktop space
         self._cancelled = False
 
-    def begin(self, _win, ix, iy):
+    def begin(self, _win, lx, ly):
         self.dragging = True
-        self.start = (ix, iy)
-        self.cur = (ix, iy)
+        self.start = (lx, ly)
+        self.cur = (lx, ly)
 
-    def update(self, ix, iy):
-        self.cur = (ix, iy)
+    def update(self, lx, ly):
+        self.cur = (lx, ly)
 
-    def selection_image_rect(self):
+    def selection_rect(self):
         if not self.start or not self.cur:
             return None
         x0, y0 = self.start
@@ -248,7 +267,7 @@ class SelectionOverlay:
             win.area.queue_draw()
 
     def finish(self):
-        rect = self.selection_image_rect()
+        rect = self.selection_rect()
         self.dragging = False
         if rect and rect[2] >= 4 and rect[3] >= 4:
             self.result = tuple(int(round(v)) for v in rect)
@@ -272,7 +291,7 @@ class SelectionOverlay:
         display = Gdk.Display.get_default()
         for m in self.monitors:
             gm = display.get_monitor(m.index)
-            win = _MonitorOverlay(self, m, gm, self.surface)
+            win = _MonitorOverlay(self, m, gm, self.surface, self.imap)
             self.windows.append(win)
             win.show_all()
         Gtk.main()
@@ -282,11 +301,12 @@ class SelectionOverlay:
 class _ScreenPickWindow(Gtk.Window):
     """One layer-shell window per monitor; lights up its screen on hover."""
 
-    def __init__(self, controller, monitor, gdk_monitor, surface):
+    def __init__(self, controller, monitor, gdk_monitor, surface, imap):
         super().__init__()
         self.controller = controller
         self.m = monitor
         self.surface = surface
+        self.imap = imap
 
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_monitor(self, gdk_monitor)
@@ -335,9 +355,11 @@ class _ScreenPickWindow(Gtk.Window):
     def on_draw(self, _w, cr):
         a = self.area.get_allocation()
         sx, sy = self._scale()
+        isx, isy = sx / self.imap.rx, sy / self.imap.ry
+        ox, oy = self.m.x * self.imap.rx, self.m.y * self.imap.ry
         cr.save()
-        cr.scale(sx, sy)
-        cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+        cr.scale(isx, isy)
+        cr.set_source_surface(self.surface, -ox, -oy)
         cr.get_source().set_filter(cairo.FILTER_FAST)
         cr.paint()
         cr.restore()
@@ -356,7 +378,10 @@ class _ScreenPickWindow(Gtk.Window):
         return False
 
     def _draw_label(self, cr, a, hovered):
-        label = f"{self.m.model}   {self.m.width} × {self.m.height}"
+        # Show the capture's size in device pixels, matching what gets saved.
+        dims = (int(self.m.width * self.imap.rx),
+                int(self.m.height * self.imap.ry))
+        label = f"{self.m.model}   {dims[0]} × {dims[1]}"
         if hovered:
             label = "Click to capture  ·  " + label
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL,
@@ -378,11 +403,12 @@ class _ScreenPickWindow(Gtk.Window):
 class _WindowPickWindow(Gtk.Window):
     """Per-monitor layer-shell overlay that highlights the hovered app window."""
 
-    def __init__(self, controller, monitor, gdk_monitor, surface):
+    def __init__(self, controller, monitor, gdk_monitor, surface, imap):
         super().__init__()
         self.controller = controller
         self.m = monitor
         self.surface = surface
+        self.imap = imap
 
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_monitor(self, gdk_monitor)
@@ -426,8 +452,10 @@ class _WindowPickWindow(Gtk.Window):
     def on_draw(self, _w, cr):
         a = self.area.get_allocation()
         sx, sy = self._scale()
-        cr.save(); cr.scale(sx, sy)
-        cr.set_source_surface(self.surface, -self.m.x, -self.m.y)
+        isx, isy = sx / self.imap.rx, sy / self.imap.ry
+        ox, oy = self.m.x * self.imap.rx, self.m.y * self.imap.ry
+        cr.save(); cr.scale(isx, isy)
+        cr.set_source_surface(self.surface, -ox, -oy)
         cr.get_source().set_filter(cairo.FILTER_FAST); cr.paint()
         cr.restore()
         cr.set_source_rgba(*DIM); cr.rectangle(0, 0, a.width, a.height); cr.fill()
@@ -438,8 +466,8 @@ class _WindowPickWindow(Gtk.Window):
             ww, wh = win["w"] * sx, win["h"] * sy
             cr.save()                       # punch the window region bright
             cr.rectangle(wx, wy, ww, wh); cr.clip()
-            cr.scale(sx, sy)
-            cr.set_source_surface(self.surface, -self.m.x, -self.m.y); cr.paint()
+            cr.scale(isx, isy)
+            cr.set_source_surface(self.surface, -ox, -oy); cr.paint()
             cr.restore()
             cr.set_source_rgb(*ACCENT); cr.set_line_width(3)
             cr.rectangle(wx, wy, ww, wh); cr.stroke()
@@ -463,10 +491,13 @@ class _WindowPickWindow(Gtk.Window):
 
 class WindowPicker:
     """Dim everything; the app window under the pointer lights up. Click it to
-    capture that whole window. Returns (x, y, w, h) global rect, or None."""
+    capture that whole window. Returns (x, y, w, h) in logical desktop coords,
+    or None."""
 
     def __init__(self, screenshot_path, monitors, windows):
         self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
+        self.imap = ImageMap(self.surface.get_width(),
+                             self.surface.get_height(), monitors)
         self.monitors = monitors
         self.windows = windows
         self.hovered = None
@@ -514,7 +545,7 @@ class WindowPicker:
         display = Gdk.Display.get_default()
         for m in self.monitors:
             gm = display.get_monitor(m.index)
-            win = _WindowPickWindow(self, m, gm, self.surface)
+            win = _WindowPickWindow(self, m, gm, self.surface, self.imap)
             self.windows_widgets.append(win)
             win.show_all()
         Gtk.main()
@@ -711,7 +742,8 @@ class AutoScrollCapture:
         try:
             shot = self._capture.full()
             full = Image.open(shot).convert("RGB")
-            x, y, w, h = self.region
+            x, y, w, h = ImageMap(full.width, full.height,
+                                  self.monitors).rect(*self.region)
             frame = full.crop((max(0, x), max(0, y),
                                min(x + w, full.width), min(y + h, full.height)))
         except Exception:
@@ -773,6 +805,10 @@ class AutoScrollCapture:
         last = self._grab()
         if last is not None:
             self.frames.append(last)
+        # Pacing thresholds compare the detected shift (frame pixels) against
+        # the region height, so it must be the region's height in frame pixels
+        # too (display scale makes it differ from the logical vh).
+        vh_px = last.height if last is not None else vh
         GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
         ticks, stall = 8, 0
         while self._running and len(self.frames) < self.MAX_FRAMES:
@@ -790,9 +826,9 @@ class AutoScrollCapture:
             if _scroll.is_confident(err):
                 self.frames.append(cur); last = cur
                 GLib.idle_add(self._status, f"Capturing…  {len(self.frames)} frames")
-                if s < 0.45 * vh:
+                if s < 0.45 * vh_px:
                     ticks = min(ticks + 3, 30)   # speed up if steps are small
-                elif s > 0.75 * vh:
+                elif s > 0.75 * vh_px:
                     ticks = max(2, ticks - 3)    # ease off near no-overlap
             else:
                 ticks = max(2, ticks - 3)        # overshoot/animation: slow down
@@ -920,7 +956,8 @@ class ScrollCapture:
         try:
             shot = self._capture.full()
             full = Image.open(shot).convert("RGB")
-            x, y, w, h = self.region
+            x, y, w, h = ImageMap(full.width, full.height,
+                                  self.monitors).rect(*self.region)
             return full.crop((max(0, x), max(0, y),
                               min(x + w, full.width), min(y + h, full.height)))
         except Exception:
@@ -1085,6 +1122,8 @@ class ScreenPicker:
 
     def __init__(self, screenshot_path, monitors):
         self.surface = cairo.ImageSurface.create_from_png(screenshot_path)
+        self.imap = ImageMap(self.surface.get_width(),
+                             self.surface.get_height(), monitors)
         self.monitors = monitors
         self.windows = []
         self.hover = -1
@@ -1119,7 +1158,7 @@ class ScreenPicker:
             self.hover = self.monitors[0].index if self.monitors else -1
         for m in self.monitors:
             gm = display.get_monitor(m.index)
-            win = _ScreenPickWindow(self, m, gm, self.surface)
+            win = _ScreenPickWindow(self, m, gm, self.surface, self.imap)
             self.windows.append(win)
             win.show_all()
         Gtk.main()

@@ -8,8 +8,11 @@ Two strategies:
     show our own overlay selector / editor on top of it -- the CleanShot feel.
   * portal_interactive(): use COSMIC's own interactive selection UI (fallback).
 
-The full-desktop PNG's pixel space matches the union of GTK monitor geometries
-(verified on this machine), so selection rectangles map 1:1 into image pixels.
+The full-desktop PNG is saved by cosmic-screenshot at device (physical)
+resolution, while GTK reports monitor geometry in logical pixels. At a
+fractional display scale the two differ — e.g. 150% on a 2560x1600 panel
+gives a 2560x1600 PNG but a ~1707x1067 logical desktop — so logical
+rectangles never go into the PNG directly: every crop goes through ImageMap.
 """
 import glob
 import os
@@ -71,13 +74,34 @@ def monitor_at_pointer(monitors=None):
 
 
 def desktop_bounds(monitors=None):
-    """Union rectangle of all monitors, in image-pixel space."""
+    """Union rectangle of all monitors, in logical pixels."""
     monitors = monitors or list_monitors()
     x0 = min(m.x for m in monitors)
     y0 = min(m.y for m in monitors)
     x1 = max(m.x + m.width for m in monitors)
     y1 = max(m.y + m.height for m in monitors)
     return (x0, y0, x1, y1)
+
+
+class ImageMap:
+    """Converts logical desktop rects to full-desktop PNG pixels.
+
+    The ratio is derived from the actual PNG size (not from GTK's scale
+    factor, which is integer-rounded — it reports 2 at a 150% scale), so it
+    self-calibrates to whatever cosmic-screenshot actually saves. Uniform
+    scaling is assumed: exact for one monitor or identical monitor scales;
+    mixed-DPI layouts are approximated."""
+
+    def __init__(self, image_width, image_height, monitors=None):
+        x0, y0, x1, y1 = desktop_bounds(monitors)
+        dw, dh = x1 - x0, y1 - y0
+        self.rx = image_width / dw if dw > 0 else 1.0
+        self.ry = image_height / dh if dh > 0 else 1.0
+
+    def rect(self, x, y, w, h):
+        """Logical (x, y, w, h) -> integer image-pixel (x, y, w, h)."""
+        return (round(x * self.rx), round(y * self.ry),
+                round(w * self.rx), round(h * self.ry))
 
 
 def _newest_png(directory, since):
