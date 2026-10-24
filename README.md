@@ -106,7 +106,8 @@ No-repo options are in [Other ways to install](#other-ways-to-install).
 - **Cloud upload** — one click uploads and copies a shareable URL to your
   clipboard (default host: catbox.moe — free, no account, permanent). `Ctrl+U`.
 - **Copy to clipboard** or **Save PNG** — the toolbar buttons (or `Ctrl+S`).
-- **Settings** — version, one-click updates, and global keyboard shortcuts.
+- **Settings** — version, one-click updates, global keyboard shortcuts, and the
+  upload host (or no Upload button at all).
 - **Panel tray icon** with a capture/record menu, auto-started at login.
 
 ## Other ways to install
@@ -126,7 +127,7 @@ autostart for the panel tray icon. Remove it with `sudo apt remove cosmicshot`.
 ### Per-user script (no root)
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo python3-pil \
+sudo apt install python3-gi python3-gi-cairo python3-pil python3-requests \
                  gir1.2-gtklayershell-0.1 gir1.2-ayatanaappindicator3-0.1 wl-clipboard
 ./install.sh
 ```
@@ -214,7 +215,15 @@ everything. `Shift+Enter` adds a line, `Enter` or `Esc` finishes the box.
 
 ## Configuration
 
-Edit `~/.config/cosmicshot/config.json` (created on first run). Notable keys:
+Most things live in **Settings** (tray menu → Settings): updates, global
+shortcuts, and the **cloud upload** host — pick catbox.moe / uguu.se / 0x0.st,
+enter a custom endpoint, or untick *Show the Upload button* to remove uploading
+from the editor altogether.
+
+Everything else is in `~/.config/cosmicshot/config.json` (created on first run).
+It must be **strict JSON** — no `//` comments and no trailing commas; a file that
+fails to parse is ignored (with a warning on stderr), which looks exactly like
+"my edits do nothing". The comments below are just for this README. Notable keys:
 
 ```jsonc
 {
@@ -235,11 +244,17 @@ Edit `~/.config/cosmicshot/config.json` (created on first run). Notable keys:
   "video_save_dir": null,      // last folder used to save a recording
 
   // Cloud upload (Upload button / Ctrl+U). Default: catbox.moe (permanent).
+  "upload_enabled": true,      // false removes the Upload button and Ctrl+U
   "upload_service": "https://catbox.moe/user/api.php",
-  "upload_field": "fileToUpload",
-  "upload_extra": { "reqtype": "fileupload" }
+  "upload_field": "fileToUpload",   // multipart file field name
+  "upload_extra": { "reqtype": "fileupload" }   // extra form fields
 }
 ```
+
+Any host that takes a multipart `POST` and answers with the URL (plain text, or
+JSON such as `{"url": …}` / `{"files": [{"url": …}]}`) works as a custom
+endpoint — e.g. uguu.se is `"upload_service": "https://uguu.se/upload.php",
+"upload_field": "files[]", "upload_extra": {}`.
 
 > **Uploads are public.** Anyone with the URL can view the image and nothing is
 > encrypted — use the blur/spotlight tools to redact before uploading.

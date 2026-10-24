@@ -269,7 +269,8 @@ class Editor(Gtk.Window):
         self.upload_b.connect("clicked", lambda *_: self.do_upload())
         header.pack_end(copy_b)
         header.pack_end(save_b)
-        header.pack_end(self.upload_b)
+        if self.cfg.get("upload_enabled", True):
+            header.pack_end(self.upload_b)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
@@ -1881,7 +1882,9 @@ class Editor(Gtk.Window):
         if ctrl and k in (Gdk.KEY_s, Gdk.KEY_S):
             self.do_save(); return True
         if ctrl and k in (Gdk.KEY_u, Gdk.KEY_U):
-            self.do_upload(); return True
+            if self.cfg.get("upload_enabled", True):
+                self.do_upload()
+            return True
         # single-key tool shortcuts
         keymap = {Gdk.KEY_v: "select", Gdk.KEY_a: "arrow", Gdk.KEY_r: "rect",
                   Gdk.KEY_e: "ellipse", Gdk.KEY_l: "line", Gdk.KEY_p: "pen",

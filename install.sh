@@ -14,14 +14,15 @@ echo "Installing CosmicShot..."
 missing=()
 command -v cosmic-screenshot >/dev/null 2>&1 || missing+=("cosmic-screenshot")
 command -v wl-copy >/dev/null 2>&1 || missing+=("wl-clipboard (wl-copy)")
-python3 -c "import gi; gi.require_version('Gtk','3.0'); gi.require_version('GtkLayerShell','0.1')" 2>/dev/null \
+/usr/bin/python3 -c "import gi; gi.require_version('Gtk','3.0'); gi.require_version('GtkLayerShell','0.1')" 2>/dev/null \
     || missing+=("python3-gi + gir1.2-gtklayershell-0.1")
-python3 -c "import cairo" 2>/dev/null || missing+=("python3-gi-cairo / python3-cairo")
-python3 -c "import PIL" 2>/dev/null || missing+=("python3-pil")
+/usr/bin/python3 -c "import cairo" 2>/dev/null || missing+=("python3-gi-cairo / python3-cairo")
+/usr/bin/python3 -c "import PIL" 2>/dev/null || missing+=("python3-pil")
+/usr/bin/python3 -c "import requests" 2>/dev/null || missing+=("python3-requests")
 if [ ${#missing[@]} -ne 0 ]; then
     echo "WARNING: missing dependencies:"; printf '  - %s\n' "${missing[@]}"
     echo "On Pop!_OS/Ubuntu try:"
-    echo "  sudo apt install python3-gi python3-gi-cairo python3-pil gir1.2-gtklayershell-0.1 wl-clipboard"
+    echo "  sudo apt install python3-gi python3-gi-cairo python3-pil python3-requests gir1.2-gtklayershell-0.1 wl-clipboard"
     echo
 fi
 
@@ -43,7 +44,7 @@ fi
 # Optional: video recording uses the ScreenCast portal + GStreamer (PipeWire
 # source + an H.264 encoder + mp4 mux).
 rec_missing=()
-python3 -c "import gi; gi.require_version('Gst','1.0')" 2>/dev/null || rec_missing+=("python3-gst-1.0")
+/usr/bin/python3 -c "import gi; gi.require_version('Gst','1.0')" 2>/dev/null || rec_missing+=("python3-gst-1.0")
 gst-inspect-1.0 pipewiresrc >/dev/null 2>&1 || rec_missing+=("gstreamer1.0-pipewire")
 gst-inspect-1.0 videocrop >/dev/null 2>&1 || rec_missing+=("gstreamer1.0-plugins-good")
 { gst-inspect-1.0 vah264enc >/dev/null 2>&1 || gst-inspect-1.0 openh264enc >/dev/null 2>&1 \
@@ -65,7 +66,7 @@ cp -r "$SRC/cosmicshot" "$DEST/cosmicshot"
 cat > "$BIN/cosmicshot" <<EOF
 #!/usr/bin/env bash
 export PYTHONPATH="$DEST\${PYTHONPATH:+:\$PYTHONPATH}"
-exec python3 -m cosmicshot "\$@"
+exec /usr/bin/python3 -m cosmicshot "\$@"
 EOF
 chmod +x "$BIN/cosmicshot"
 

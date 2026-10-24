@@ -1,6 +1,7 @@
 """Persistent configuration and shared defaults."""
 import json
 import os
+import sys
 from pathlib import Path
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cosmicshot"
@@ -81,6 +82,8 @@ DEFAULTS = {
     # Configurable for other hosts, e.g. open-source uguu.se (links expire ~3h):
     #   "upload_service": "https://uguu.se/upload.php",
     #   "upload_field": "files[]", "upload_extra": {}
+    # Set false to remove the Upload button (and Ctrl+U) entirely.
+    "upload_enabled": True,
     "upload_service": "https://catbox.moe/user/api.php",
     "upload_field": "fileToUpload",
     "upload_extra": {"reqtype": "fileupload"},
@@ -107,13 +110,29 @@ SHORTCUT_ACTIONS = [
 ]
 
 
+# Upload hosts offered in Settings. (label, endpoint, field, extra form fields)
+UPLOAD_PRESETS = [
+    ("catbox.moe (permanent)", "https://catbox.moe/user/api.php", "fileToUpload",
+     {"reqtype": "fileupload"}),
+    ("uguu.se (expires in ~3 h)", "https://uguu.se/upload.php", "files[]", {}),
+    ("0x0.st (expires after 30 days+)", "https://0x0.st", "file", {}),
+]
+
+
 def load():
     cfg = dict(DEFAULTS)
     try:
         if CONFIG_FILE.exists():
-            cfg.update(json.loads(CONFIG_FILE.read_text()))
-    except Exception:
-        pass
+            user = json.loads(CONFIG_FILE.read_text())
+            if not isinstance(user, dict):
+                raise ValueError("top level must be a JSON object")
+            cfg.update(user)
+    except Exception as exc:
+        # A broken file must not break the app, but silently falling back to
+        # the defaults makes every edit look ignored (issue #4) -- say so.
+        print(f"cosmicshot: ignoring {CONFIG_FILE}: {exc} "
+              "(it must be strict JSON: no comments, no trailing commas)",
+              file=sys.stderr)
     return cfg
 
 

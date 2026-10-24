@@ -20,8 +20,11 @@ rm -rf "$STAGE/usr/share/cosmicshot/cosmicshot/__pycache__"
 install -d "$STAGE/usr/bin"
 cat > "$STAGE/usr/bin/cosmicshot" <<'EOF'
 #!/usr/bin/env bash
+# /usr/bin/python3 on purpose: the dependencies (python3-gi, python3-pil, ...)
+# are distro packages, so a pyenv/conda/uv python3 first on PATH would fail
+# with "No module named 'PIL'" (issue #2).
 export PYTHONPATH="/usr/share/cosmicshot${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m cosmicshot "$@"
+exec /usr/bin/python3 -m cosmicshot "$@"
 EOF
 chmod 0755 "$STAGE/usr/bin/cosmicshot"
 
@@ -63,7 +66,7 @@ Version: $VER
 Architecture: all
 Maintainer: David Boulay <david.boulay@lojel.com>
 Installed-Size: $SIZE_KB
-Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, wl-clipboard
+Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, python3-pil, python3-requests, wl-clipboard
 Recommends: gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, python3-gst-1.0, gstreamer1.0-pipewire, gstreamer1.0-plugins-good, gstreamer1.0-vaapi, gstreamer1.0-plugins-bad, gstreamer1.0-libav
 Suggests: gcc, libwayland-dev, wayland-protocols
 Section: graphics

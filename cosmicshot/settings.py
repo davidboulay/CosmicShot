@@ -65,6 +65,8 @@ class SettingsWindow:
         root.pack_start(self._version_section(), False, False, 0)
         root.pack_start(Gtk.Separator(), False, False, 0)
         root.pack_start(self._shortcuts_section(), False, False, 0)
+        root.pack_start(Gtk.Separator(), False, False, 0)
+        root.pack_start(self._upload_section(), False, False, 0)
 
     # -- version / updates ----------------------------------------------
     def _version_section(self):
@@ -213,11 +215,127 @@ class SettingsWindow:
         except Exception as exc:
             self._sc_note.set_text(f"Couldn't write COSMIC shortcuts: {exc}")
 
+    # -- upload ----------------------------------------------------------
+    def _upload_section(self):
+        """Cloud upload: on/off, host preset, or a custom endpoint (issue #4)."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        title = Gtk.Label(xalign=0)
+        title.set_markup("<b>Cloud upload</b>")
+        box.pack_start(title, False, False, 0)
+        hint = Gtk.Label(xalign=0, label="The editor's Upload button (Ctrl+U) sends "
+                         "the image to this host and copies the link. Uploads are "
+                         "public: anyone with the URL can view the image.")
+        hint.get_style_context().add_class("dim-label")
+        hint.set_line_wrap(True)
+        box.pack_start(hint, False, False, 0)
+
+        self._upload_enabled = Gtk.CheckButton(label="Show the Upload button")
+        self._upload_enabled.set_active(bool(self.cfg.get("upload_enabled", True)))
+        self._upload_enabled.connect("toggled", self._on_upload_toggled)
+        box.pack_start(self._upload_enabled, False, False, 0)
+
+        grid = Gtk.Grid(column_spacing=10, row_spacing=8)
+        grid.attach(Gtk.Label(label="Host", xalign=0), 0, 0, 1, 1)
+        self._upload_host = Gtk.ComboBoxText()
+        for label, _url, _field, _extra in config.UPLOAD_PRESETS:
+            self._upload_host.append_text(label)
+        self._upload_host.append_text("Custom…")
+        self._upload_host.set_hexpand(True)
+        grid.attach(self._upload_host, 1, 0, 1, 1)
+
+        self._upload_url = Gtk.Entry(hexpand=True)
+        self._upload_url.set_placeholder_text("https://example.com/upload")
+        self._upload_url.set_tooltip_text("Endpoint that accepts a multipart POST and "
+                                          "answers with the URL (plain text or JSON).")
+        self._upload_field = Gtk.Entry(hexpand=True)
+        self._upload_field.set_placeholder_text("file")
+        self._upload_field.set_tooltip_text("Name of the multipart file field.")
+        self._upload_extra = Gtk.Entry(hexpand=True)
+        self._upload_extra.set_placeholder_text('{"reqtype": "fileupload"}')
+        self._upload_extra.set_tooltip_text("Extra form fields, as a JSON object.")
+        self._custom_rows = []
+        for i, (label, entry) in enumerate([("Endpoint URL", self._upload_url),
+                                            ("File field", self._upload_field),
+                                            ("Extra fields", self._upload_extra)], 1):
+            lab = Gtk.Label(label=label, xalign=0)
+            grid.attach(lab, 0, i, 1, 1)
+            grid.attach(entry, 1, i, 1, 1)
+            self._custom_rows += [lab, entry]
+            entry.connect("changed", self._on_upload_custom_changed)
+        box.pack_start(grid, False, False, 0)
+
+        self._upload_note = Gtk.Label(xalign=0, label="")
+        self._upload_note.get_style_context().add_class("dim-label")
+        self._upload_note.set_line_wrap(True)
+        box.pack_start(self._upload_note, False, False, 0)
+
+        # Select the preset matching the saved endpoint, else "Custom…".
+        url = self.cfg.get("upload_service") or ""
+        idx = next((i for i, p in enumerate(config.UPLOAD_PRESETS) if p[1] == url),
+                   len(config.UPLOAD_PRESETS))
+        self._upload_url.set_text(url)
+        self._upload_field.set_text(self.cfg.get("upload_field") or "")
+        import json
+        self._upload_extra.set_text(json.dumps(self.cfg.get("upload_extra") or {}))
+        self._upload_host.set_active(idx)
+        self._upload_host.connect("changed", self._on_upload_host_changed)
+        self._sync_upload_rows()
+        return box
+
+    def _sync_upload_rows(self):
+        enabled = self._upload_enabled.get_active()
+        custom = self._upload_host.get_active() >= len(config.UPLOAD_PRESETS)
+        self._upload_host.set_sensitive(enabled)
+        for w in self._custom_rows:
+            w.set_visible(custom)
+            w.set_no_show_all(not custom)
+            w.set_sensitive(enabled)
+
+    def _on_upload_toggled(self, btn):
+        self.cfg["upload_enabled"] = btn.get_active()
+        config.save(self.cfg)
+        self._sync_upload_rows()
+        self._upload_note.set_text("Saved. Takes effect on the next capture.")
+
+    def _on_upload_host_changed(self, combo):
+        i = combo.get_active()
+        if 0 <= i < len(config.UPLOAD_PRESETS):
+            _label, url, field, extra = config.UPLOAD_PRESETS[i]
+            import json
+            self._upload_url.set_text(url)
+            self._upload_field.set_text(field)
+            self._upload_extra.set_text(json.dumps(extra))
+            self.cfg.update(upload_service=url, upload_field=field, upload_extra=dict(extra))
+            config.save(self.cfg)
+            self._upload_note.set_text("Saved. Takes effect on the next capture.")
+        self._sync_upload_rows()
+
+    def _on_upload_custom_changed(self, _entry):
+        if self._upload_host.get_active() < len(config.UPLOAD_PRESETS):
+            return  # preset values are being filled in programmatically
+        import json
+        url = self._upload_url.get_text().strip()
+        field = self._upload_field.get_text().strip() or "file"
+        try:
+            extra = json.loads(self._upload_extra.get_text() or "{}")
+            if not isinstance(extra, dict):
+                raise ValueError("must be a JSON object")
+        except ValueError as exc:
+            self._upload_note.set_text(f"Extra fields: not valid JSON ({exc}); not saved.")
+            return
+        if not url.startswith(("http://", "https://")):
+            self._upload_note.set_text("Endpoint URL must start with http:// or https://; not saved.")
+            return
+        self.cfg.update(upload_service=url, upload_field=field, upload_extra=extra)
+        config.save(self.cfg)
+        self._upload_note.set_text("Saved. Takes effect on the next capture.")
+
     # -- lifecycle -------------------------------------------------------
     def run(self):
         self.win.connect("destroy", Gtk.main_quit)
         self.win.show_all()
         self._update_btn.hide()
+        self._sync_upload_rows()
         if self.cfg.get("auto_update"):
             self._check()
         Gtk.main()
