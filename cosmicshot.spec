@@ -1,5 +1,10 @@
+# CosmicShot RPM spec (Fedora / RHEL-family / openSUSE).
+# Built by build-rpm.sh, which passes the version from cosmicshot/config.py:
+#   rpmbuild --define "pkgver X.Y.Z" -ba cosmicshot.spec
+%{!?pkgver: %global pkgver 0.0.0}
+
 Name:           cosmicshot
-Version:        1.5.0
+Version:        %{pkgver}
 Release:        1%{?dist}
 Summary:        Screenshot and screen-recording tool for COSMIC/Wayland
 BuildArch:      noarch
@@ -13,17 +18,20 @@ BuildRequires:  python3-pillow
 Requires:       python3
 Requires:       python3-gobject
 Requires:       python3-cairo
+Requires:       gtk3
 Requires:       gtk-layer-shell
 Requires:       python3-pillow
+Requires:       python3-requests
 Requires:       wl-clipboard
-# Requires:       cosmic-screenshot (Might not exist as a package yet or it's part of cosmic-comp)
-Recommends:     libappindicator-gtk3
+# cosmic-screenshot ships with the COSMIC desktop itself (cosmic-session /
+# cosmic-comp); it is not a separately packaged dependency.
+Recommends:     libayatana-appindicator-gtk3
 Recommends:     python3-gstreamer1
-Recommends:     gstreamer1-pipewire
+Recommends:     pipewire-gstreamer
 Recommends:     gstreamer1-plugins-good
 Recommends:     gstreamer1-vaapi
 Recommends:     gstreamer1-plugins-bad-free
-Recommends:     gstreamer1-libav
+Suggests:       gstreamer1-libav
 Suggests:       gcc
 Suggests:       wayland-devel
 Suggests:       wayland-protocols-devel
@@ -37,10 +45,10 @@ floating preview, a panel tray icon, and a settings panel with one-click
 updates and global shortcuts.
 
 %prep
-%setup -q -n CosmicShot
+%setup -q -n cosmicshot-%{version}
 
 %build
-# Nothing to build, it's a Python application.
+# Nothing to build: pure Python.
 
 %install
 mkdir -p %{buildroot}%{_datadir}/%{name}/%{name}
@@ -50,8 +58,9 @@ rm -rf %{buildroot}%{_datadir}/%{name}/%{name}/__pycache__
 mkdir -p %{buildroot}%{_bindir}
 cat > %{buildroot}%{_bindir}/%{name} <<'BINEOF'
 #!/usr/bin/env bash
+# /usr/bin/python3 on purpose: the dependencies are distro packages.
 export PYTHONPATH="%{_datadir}/%{name}${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m cosmicshot "$@"
+exec /usr/bin/python3 -m cosmicshot "$@"
 BINEOF
 chmod 0755 %{buildroot}%{_bindir}/%{name}
 
@@ -71,7 +80,7 @@ X-GNOME-Autostart-enabled=true
 NoDisplay=true
 AUTOSTART
 
-# Generate icons
+# Themed icons in several sizes (falls back to the raw PNG without Pillow).
 for sz in 16 24 32 48 64 128 256 512; do
     d="%{buildroot}%{_datadir}/icons/hicolor/${sz}x${sz}/apps"
     mkdir -p "$d"
@@ -84,9 +93,13 @@ done
 %{_bindir}/%{name}
 %{_datadir}/%{name}/
 %{_datadir}/applications/cosmicshot.desktop
-%{_sysconfdir}/xdg/autostart/cosmicshot-tray.desktop
+%config(noreplace) %{_sysconfdir}/xdg/autostart/cosmicshot-tray.desktop
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
-* Wed Aug 26 2026 Sebs <sebs@example.com> - 1.5.0-1
+* Sat Oct 24 2026 David Boulay <david.boulay@lojel.com> - 1.6.0-1
+- Version now comes from build-rpm.sh (cosmicshot/config.py); fixed Fedora
+  package names; launcher pins /usr/bin/python3
+
+* Wed Aug 26 2026 Sebs - 1.5.0-1
 - Initial RPM package
