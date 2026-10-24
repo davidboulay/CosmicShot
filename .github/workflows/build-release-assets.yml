@@ -1,0 +1,36 @@
+name: Build Release Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y rpm dpkg-dev
+
+      - name: Build Debian package (.deb)
+        run: |
+          chmod +x build-deb.sh
+          ./build-deb.sh
+
+      - name: Build RPM package (.rpm)
+        run: |
+          chmod +x build-rpm.sh
+          ./build-rpm.sh
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm

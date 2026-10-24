@@ -114,6 +114,30 @@ No-repo options are in [Other ways to install](#other-ways-to-install).
 
 The [APT repository](#install) above is the recommended way. Alternatives:
 
+### Fedora / RPM-based Distributions
+
+Download the latest `cosmicshot-*.noarch.rpm` from the
+[**Releases page**](https://github.com/davidboulay/CosmicShot/releases/latest), then install it:
+
+```bash
+sudo dnf install ./cosmicshot-*.noarch.rpm
+```
+
+<details>
+<summary>Prefer to build the RPM yourself?</summary>
+
+```bash
+# 1. Install build dependencies
+sudo dnf install -y rpm-build python3-devel python3-pillow
+
+# 2. Build the RPM using the included script
+./build-rpm.sh
+
+# 3. Install the generated package
+sudo dnf install -y dist/cosmicshot-*.noarch.rpm
+```
+</details>
+
 ### Single `.deb` download
 
 Download the latest `cosmicshot_*.deb` from the
