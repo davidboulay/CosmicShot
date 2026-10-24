@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all
+Codename: stable
+Components: main
+Date: Sat, 24 Oct 2026 09:40:29 +0000
+Label: CosmicShot
+Origin: CosmicShot
+Suite: stable
+MD5Sum:
+ 7b367ce077114de04d50eeffab0ebd02              142 Release
+ 2026f0b06fc0de97062fbfa40674b599            23455 main/binary-all/Packages
+ fca1912b327e6865499088ec390f5dae             3833 main/binary-all/Packages.gz
+SHA1:
+ ac9d8e8d2f154bbb1078e867676b39299b46200f              142 Release
+ 7c77108792adfae70f2fe169764acd86099a6e7c            23455 main/binary-all/Packages
+ 768cad9bf7e7f44cf56b12f7c1d873e06d667022             3833 main/binary-all/Packages.gz
+SHA256:
+ 54b6c86e61e1a6bb21fb0b2f76faf7df25fce7059bb7fa1cd5abb3fb522f50dc              142 Release
+ ea79c0459335b2b2a05aa36e169290f97a72fa250d95222eb6685014b10a25aa            23455 main/binary-all/Packages
+ baa7b3ebb1fe2012b24c800eae57de637389a3dcc44b7954fa85a0a67f5d32eb             3833 main/binary-all/Packages.gz
+SHA512:
+ 6332753fe81621ce7415bbb483956ac8ffe7330a97fd0895c19aecee246e664c1ea028b185725d8f8fd8d20ebb4bc19602bd1639d3378eee51d9529aca8aca11              142 Release
+ 4d6314cb63ff41367aea44e49215dc2349150f0a45a5766914ce9d49b142331832e7c92f0454a9e329d0c1e19bd6261ed2a2ab51c4588c7c717b4995db9ed1f9            23455 main/binary-all/Packages
+ e3c3af17a93d5089392ade50731963a85683e6c36ef0facc4bac2925e06ba211066018f3d50e400f338b912fb9af055f57229acecbaf0c98ad60c2054a83345d             3833 main/binary-all/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEFIP5S2gvKzRxtcj3mKl+wr2F2ukFAmrcfQ0ACgkQmKl+wr2F
+2ukB9w/+L5nqxqo9lu5huMDJ99Rkp16Ayxed71an56SwQJSCEZxesQJYJ337lOA9
+L97k4R0aF970dkCsooBf5kYZWvuArqAkG8GUk2nQ58j2FAZsEQpWrb7IB+rsHgt4
+hrao9jY7985e/FdOvFQT/BeWNKjQIHG9OY+okOFhFCOLMdpf96tPY1vaDF5+R0h9
+dvt3gHwFyqyx2DkcB95M2T5Yi19jrOR4E+dpkD+0mHY4tCo0D4C9hTmzGLLJEY09
+LyHdWc7t8byt++Bnk7QqVjIfta2RAGeZyrIKlf8OD12ycoM5r3jv1FHJ5AkVPLwr
+ae21RW3O5HoFEH+JJLryBhUm5bOhvp4uBvB84DhNQwYd9XL+mobaIA3iu30N+ARx
+8DCY43HWUPlvhGsOwri0kF7IAROFAz9NUTftf2K20PQ4y7SkGGErO4wAlhqjE8QC
+isGR1XgJovdv1BiXXnxIIOmIm339ZG0e1cjbpuZv8ltMO3vok22PE6FIyNb14f3q
+0EuC7AmeP+dEZEqajL/lC47J7AROVPPiBS4VBU0cov8Se47XeTfheqK/ATtyVvPe
+fim8r8YpcDsRNVICPwva8Qgz9X8h9HePUjTQhChn6hNDLKIVubiB+lMnZELGsiIZ
+3cID4bJNxclF8rR0QPLpUmmViKwbHTYp8Dt5ia9EfGQ08QF0Gb8=
+=gNfj
+-----END PGP SIGNATURE-----
