@@ -9,6 +9,8 @@ straight in an editor to draw arrows, boxes, text, blur sensitive bits, add
 numbered steps — and **copy, save, or upload a shareable link**. It also records
 video, takes scrolling screenshots, and lives in your panel as a tray icon.
 
+**Project page:** [davidboulay.com/apps/cosmicshot](https://davidboulay.com/apps/cosmicshot/)
+
 ![The CosmicShot annotation editor](docs/editor.png)
 
 <p align="center">
