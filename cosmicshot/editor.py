@@ -39,36 +39,9 @@ CROP_RATIOS = [
     ("16:9", 16 / 9), ("9:16", 9 / 16),
 ]
 
-# --- editor theme (scoped via .cs-* classes so it only touches our UI, and
-#     built from a light/dark palette so it follows COSMIC) ---
-def _build_css(pal):
-    ring = "#ffffff" if pal is theme_mod.DARK else "#1b1c20"
-    return f"""
-.cs-toolbar {{
-  background-color: {pal['toolbar']};
-  border-bottom: 1px solid {pal['sep']};
-  padding: 8px 10px;
-}}
-.cs-group {{ background-color: {pal['group']}; border-radius: 11px; padding: 3px; }}
-.cs-sep {{ background-color: {pal['sep']}; margin: 4px 6px; }}
-button.cs-tool {{
-  background-image: none; background-color: transparent;
-  color: {pal['tool_fg']}; border: none; box-shadow: none;
-  border-radius: 8px; min-width: 30px; min-height: 28px;
-  margin: 0 1px; padding: 2px 4px;
-}}
-button.cs-tool:hover {{ background-color: {pal['tool_hover']}; }}
-button.cs-tool:checked {{ background-color: {theme_mod.ACCENT}; color: #ffffff; }}
-button.cs-tool:checked:hover {{ background-color: #338cff; }}
-button.cs-swatch {{
-  background-image: none; border: 2px solid transparent; box-shadow: none;
-  border-radius: 11px; min-width: 18px; min-height: 18px; padding: 0; margin: 0 2px;
-}}
-button.cs-swatch:hover {{ border-color: {pal['sep']}; }}
-button.cs-swatch.selected {{ border-color: {ring}; }}
-.cs-toolbar spinbutton {{ border-radius: 8px; min-height: 26px; }}
-.cs-toolbar label {{ color: {pal['label']}; }}
-""".encode()
+def install_theme(dark):
+    """(Re)install the shared CosmicShot stylesheet for light/dark."""
+    theme_mod.install(dark)
 
 
 def _available_fonts():
@@ -89,28 +62,6 @@ def _available_fonts():
         if c in ("Sans", "Serif", "Monospace") or c in have:
             out.append(c)
     return out
-
-
-_theme_provider = None
-
-
-def install_theme(dark):
-    """(Re)install the editor CSS for light/dark and set the GTK dark preference
-    so the header/titlebar matches COSMIC."""
-    global _theme_provider
-    try:
-        from gi.repository import Gdk
-        settings = Gtk.Settings.get_default()
-        settings.set_property("gtk-application-prefer-dark-theme", bool(dark))
-        screen = Gdk.Screen.get_default()
-        if _theme_provider is not None:
-            Gtk.StyleContext.remove_provider_for_screen(screen, _theme_provider)
-        _theme_provider = Gtk.CssProvider()
-        _theme_provider.load_from_data(_build_css(theme_mod.palette(dark)))
-        Gtk.StyleContext.add_provider_for_screen(
-            screen, _theme_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    except Exception:
-        pass
 
 
 def _box_handle_points(bbox):
@@ -140,6 +91,66 @@ class _DrawCtx:
         self.blur_surface = blur_surface
         self.img_w = img_w
         self.img_h = img_h
+
+
+class _ColorWell(Gtk.Button):
+    """The custom-colour control: a rainbow ring around the current colour
+    (the familiar 'more colours' affordance) that opens the colour chooser.
+    Mirrors Gtk.ColorButton's small API (get/set_rgba, "color-set")."""
+    from gi.repository import GObject as _GObject
+    __gsignals__ = {"color-set": (_GObject.SignalFlags.RUN_FIRST, None, ())}
+
+    def __init__(self, editor, hexc):
+        super().__init__()
+        self._editor = editor
+        self._rgba = Gdk.RGBA(); self._rgba.parse(hexc)
+        self._area = Gtk.DrawingArea()
+        self._area.set_size_request(20, 20)
+        self._area.connect("draw", self._draw)
+        self.add(self._area)
+        self.connect("clicked", self._choose)
+
+    def get_rgba(self):
+        return self._rgba
+
+    def set_rgba(self, rgba):
+        self._rgba = rgba
+        self._area.queue_draw()
+
+    def _draw(self, w, cr):
+        a = w.get_allocation()
+        cx, cy = a.width / 2, a.height / 2
+        r = min(cx, cy)
+        steps = 36
+        for i in range(steps):                      # hue ring
+            import colorsys
+            rr, gg, bb = colorsys.hsv_to_rgb(i / steps, 0.85, 1.0)
+            cr.set_source_rgb(rr, gg, bb)
+            a0 = (i / steps) * 2 * math.pi - math.pi / 2
+            a1 = ((i + 1.15) / steps) * 2 * math.pi - math.pi / 2
+            cr.move_to(cx, cy)
+            cr.arc(cx, cy, r, a0, a1)
+            cr.close_path()
+            cr.fill()
+        bg = self._editor._pal["toolbar"].lstrip("#")
+        cr.set_source_rgb(*(int(bg[i:i + 2], 16) / 255 for i in (0, 2, 4)))
+        cr.arc(cx, cy, r - 2.6, 0, 2 * math.pi)
+        cr.fill()
+        c = self._rgba
+        cr.set_source_rgb(c.red, c.green, c.blue)
+        cr.arc(cx, cy, r - 4.4, 0, 2 * math.pi)
+        cr.fill()
+        return False
+
+    def _choose(self, *_):
+        dlg = Gtk.ColorChooserDialog(title="Custom colour",
+                                     transient_for=self.get_toplevel(), modal=True)
+        dlg.set_use_alpha(False)
+        dlg.set_rgba(self._rgba)
+        if dlg.run() == Gtk.ResponseType.OK:
+            self.set_rgba(dlg.get_rgba())
+            self.emit("color-set")
+        dlg.destroy()
 
 
 class Editor(Gtk.Window):
@@ -225,79 +236,181 @@ class Editor(Gtk.Window):
         self._build_ui()
         self._apply_window_sizing()
 
+    # Chrome around the canvas (header bar + toolbar), and breathing room
+    # kept around the image when the window is sized to fit it.
+    _CHROME_H = 100
+    _IMAGE_MARGIN = 48
+    _MIN_W, _MIN_H = 480, 360
+
+    def _target_workarea(self):
+        """Workarea (logical px) of the screen the editor will open on.
+
+        Wayland gives a client no say over placement and no way to ask where
+        it will land, so guess the screen the compositor will pick: the active
+        output on Plasma (KWin places new windows there), else the screen under
+        the pointer, else the primary one. ``_fit_to_monitor`` corrects the
+        size after mapping if the guess was wrong."""
+        display = self.get_display() or Gdk.Display.get_default()
+        mon = None
+        try:
+            from . import capture as _capture
+            if _capture.is_plasma():
+                pos = _capture._kwin_active_output_pos()
+                if pos:
+                    mon = display.get_monitor_at_point(int(pos[0]) + 1, int(pos[1]) + 1)
+        except Exception:
+            mon = None
+        if mon is None:
+            try:
+                _s, x, y = display.get_default_seat().get_pointer().get_position()
+                mon = display.get_monitor_at_point(x, y)
+            except Exception:
+                mon = None
+        mon = mon or display.get_primary_monitor() or display.get_monitor(0)
+        return mon.get_workarea() if mon else None
+
+    def _ideal_size(self, wa):
+        """Window size that shows the image at its natural size (1 image px per
+        device px, like the capture) plus margins, capped to 92% x 90% of the
+        workarea, and never narrower than the toolbar needs (when that fits)."""
+        dev = self._device_scale()
+        iw = self.base_image.width / dev
+        ih = self.base_image.height / dev
+        w = iw + 2 * self._IMAGE_MARGIN
+        h = ih + 2 * self._IMAGE_MARGIN + self._CHROME_H
+        # Measure the toolbar with its permanent widgets shown (contextual
+        # controls stay hidden thanks to no_show_all) plus room for the widest
+        # usual contextual control, so switching tools doesn't need scrolling.
+        self.toolbar.show_all()
+        tb = self.toolbar_content.get_preferred_width()[1] + 24 + 190
+        w = max(w, tb, 640)
+        h = max(h, 440)
+        if wa is not None:
+            w = min(w, int(wa.width * 0.92))
+            h = min(h, int(wa.height * 0.90))
+        return int(max(self._MIN_W, w)), int(max(self._MIN_H, h))
+
     def _apply_window_sizing(self):
-        """Size the window so the whole toolbar is visible, and never let it be
-        resized narrower than the tools."""
-        need_w = self.toolbar.get_preferred_width()[1] + 24  # natural toolbar width
-        img_w = min(1280, self.base_image.width + 40)
-        img_h = min(820, self.base_image.height + 140)
-        self.set_default_size(max(need_w, img_w), img_h)
+        """Size the window to the image, within the target screen's workarea.
+
+        The toolbar sits in a horizontal scroller, so it never forces the
+        window wider than the screen; the minimum size stays small."""
+        self.set_default_size(*self._ideal_size(self._target_workarea()))
         geom = Gdk.Geometry()
-        geom.min_width = need_w
-        geom.min_height = 360
+        geom.min_width, geom.min_height = self._MIN_W, self._MIN_H
         self.set_geometry_hints(None, geom, Gdk.WindowHints.MIN_SIZE)
+
+    def _fit_to_monitor(self, *_):
+        """After mapping, shrink the window if it ended up larger than the
+        workarea of the screen it was actually placed on."""
+        try:
+            gdkwin = self.get_window()
+            mon = self.get_display().get_monitor_at_window(gdkwin) if gdkwin else None
+            if mon is None:
+                return False
+            wa = mon.get_workarea()
+            w, h = self.get_size()
+            mw, mh = int(wa.width * 0.96), int(wa.height * 0.94)
+            if w > mw or h > mh:
+                self.resize(min(w, mw), min(h, mh))
+        except Exception:
+            pass
+        return False
+
+    def _device_scale(self):
+        """Device px per logical px: Plasma's fractional scale when known,
+        else GTK's integer scale."""
+        s = self._native_cap and (1.0 / self._native_cap)
+        return float(s or self.get_scale_factor() or 1)
 
     # ---------------------------------------------------------------- surfaces
     def _rebuild_surfaces(self):
+        self._update_subtitle()
         self.base_surface, self._base_buf = pil_to_surface(self.base_image)
         blur = make_pixelated(self.base_image, self.blur_block)
         self.blur_surface, self._blur_buf = pil_to_surface(blur)
 
     # ---------------------------------------------------------------------- UI
     def _build_ui(self):
+        self.get_style_context().add_class("cs-window")
+        install_theme(self._dark)
+        sc = self.get_scale_factor()
+
+        # ---- header: history on the left, the three exits on the right ----
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.props.title = "CosmicShot"
+        self.header = header
+        self._update_subtitle()
         self.set_titlebar(header)
 
-        undo_b = Gtk.Button.new_from_icon_name("edit-undo-symbolic", Gtk.IconSize.BUTTON)
-        undo_b.set_tooltip_text("Undo (Ctrl+Z)")
-        undo_b.connect("clicked", lambda *_: self.undo())
-        redo_b = Gtk.Button.new_from_icon_name("edit-redo-symbolic", Gtk.IconSize.BUTTON)
-        redo_b.set_tooltip_text("Redo (Ctrl+Shift+Z)")
-        redo_b.connect("clicked", lambda *_: self.redo())
-        header.pack_start(undo_b)
-        header.pack_start(redo_b)
+        hist = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        self.undo_b = self._icon_button("undo", "Undo (Ctrl+Z)", lambda *_: self.undo())
+        self.redo_b = self._icon_button("redo", "Redo (Ctrl+Shift+Z)", lambda *_: self.redo())
+        hist.pack_start(self.undo_b, False, False, 0)
+        hist.pack_start(self.redo_b, False, False, 0)
+        header.pack_start(hist)
 
         copy_b = Gtk.Button(label="Copy")
-        copy_b.get_style_context().add_class("suggested-action")
+        copy_b.get_style_context().add_class("cs-primary")
         copy_b.set_tooltip_text("Copy the image to the clipboard and close\n"
                                 "(Ctrl+C copies the selected element instead)")
         copy_b.connect("clicked", lambda *_: self.do_copy())
         save_b = Gtk.Button(label="Save")
-        save_b.set_tooltip_text("Save PNG (Ctrl+S)")
+        save_b.get_style_context().add_class("cs-secondary")
+        save_b.set_tooltip_text("Save PNG and close (Ctrl+S)")
         save_b.connect("clicked", lambda *_: self.do_save())
         self.upload_b = Gtk.Button(label="Upload")
-        self.upload_b.set_tooltip_text("Upload and copy a shareable URL (Ctrl+U)")
+        self.upload_b.get_style_context().add_class("cs-secondary")
+        self.upload_b.set_tooltip_text("Upload and copy a shareable link (Ctrl+U)")
         self.upload_b.connect("clicked", lambda *_: self.do_upload())
-        header.pack_end(copy_b)
-        header.pack_end(save_b)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         if self.cfg.get("upload_enabled", True):
-            header.pack_end(self.upload_b)
+            actions.pack_start(self.upload_b, False, False, 0)
+        actions.pack_start(save_b, False, False, 0)
+        actions.pack_start(copy_b, False, False, 0)
+        header.pack_end(actions)
+        for b in (copy_b, save_b, self.upload_b):
+            self._hand_on_hover(b)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.get_style_context().add_class("cs-root")
         self.add(root)
 
-        install_theme(self._dark)
+        # ---- toolbar: centred content inside a horizontal scroller, so the
+        #      window is never forced wider than a small screen ----
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        bar.get_style_context().add_class("cs-toolbar")
+        root.pack_start(bar, False, False, 0)
+        self.toolbar = bar
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
+        scroller.set_propagate_natural_width(True)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_overlay_scrolling(True)
+        bar.pack_start(scroller, True, True, 0)
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        content.set_halign(Gtk.Align.CENTER)
+        scroller.add(content)
+        self.toolbar_content = content
+        toolbar = content  # contextual controls below pack into this row
 
-        # toolbar packed directly so the window is forced at least this wide
-        # (tools are always fully visible, never cut off)
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        toolbar.get_style_context().add_class("cs-toolbar")
-        root.pack_start(toolbar, False, False, 0)
-        self.toolbar = toolbar
-
-        # tool toggle buttons (radio behavior), in a segmented group
-        toolgroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        # tools: one segmented group, sub-grouped by kind with hairline dividers
+        toolgroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=1)
         toolgroup.get_style_context().add_class("cs-group")
         toolbar.pack_start(toolgroup, False, False, 0)
         group = None
         self.tool_buttons = {}
         self._tool_images = {}
-        for key, label, glyph in TOOLS:
+        for key, label, _glyph in TOOLS:
+            if key in self._TOOL_BREAKS:
+                d = Gtk.Box()
+                d.get_style_context().add_class("cs-divider")
+                toolgroup.pack_start(d, False, False, 0)
             btn = Gtk.RadioButton.new_from_widget(group)
             btn.set_mode(False)  # render as toggle button, not radio dot
-            img = Gtk.Image.new_from_pixbuf(icons.pixbuf(key, 18, self._pal["icon"]))
+            img = Gtk.Image.new_from_surface(
+                icons.surface(key, 18, self._pal["icon"], sc))
             btn.set_image(img)
             btn.set_always_show_image(True)
             self._tool_images[key] = img
@@ -309,141 +422,15 @@ class Editor(Gtk.Window):
             self.tool_buttons[key] = btn
             self._hand_on_hover(btn)
 
-        self._add_sep(toolbar)
-
-        # --- contextual style controls (placed near the tools so they're always
-        #     visible without scrolling; only one shows at a time) ---
-        # stroke thickness (applies to new shapes AND the selected shape)
-        self.thick_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.thick_ctl.pack_start(Gtk.Label(label="Thickness"), False, False, 0)
-        adj = Gtk.Adjustment(value=self.width, lower=1, upper=60, step_increment=1)
-        self.width_spin = Gtk.SpinButton(adjustment=adj, climb_rate=1, digits=0)
-        self.width_spin.set_tooltip_text("Stroke thickness")
-        self.width_spin.connect("value-changed", self._on_width_changed)
-        self.thick_ctl.pack_start(self.width_spin, False, False, 0)
-        toolbar.pack_start(self.thick_ctl, False, False, 0)
-
-        # angle snapping for lines / arrows (checkbox locks it on)
-        self.snap_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.snap_check = Gtk.CheckButton(label=f"Snap {self.SNAP_DEG}°")
-        self.snap_check.set_active(self.snap_angles)
-        self.snap_check.set_tooltip_text(
-            f"Lock lines and arrows to {self.SNAP_DEG}° steps.\n"
-            "Off: hold Shift to snap.  On: hold Shift for a free angle.")
-        self.snap_check.connect("toggled", self._on_snap_toggled)
-        self.snap_ctl.pack_start(self.snap_check, False, False, 0)
-        toolbar.pack_start(self.snap_ctl, False, False, 0)
-        self._hand_on_hover(self.snap_check)
-
-        # straight vs freehand highlighter strokes
-        self.hl_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.straight_check = Gtk.CheckButton(label="Straight")
-        self.straight_check.set_active(self.highlight_straight)
-        self.straight_check.set_tooltip_text(
-            "Lay the highlighter down as one straight stroke, snapped to "
-            f"{self.SNAP_DEG}° steps — so it follows a line of text exactly.\n"
-            "Off: the stroke follows your hand.  Hold Shift to invert.")
-        self.straight_check.connect("toggled", self._on_straight_toggled)
-        self.hl_ctl.pack_start(self.straight_check, False, False, 0)
-        toolbar.pack_start(self.hl_ctl, False, False, 0)
-        self._hand_on_hover(self.straight_check)
-
-        # perfect circle vs free ellipse
-        self.circle_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.circle_check = Gtk.CheckButton(label="Circle")
-        self.circle_check.set_active(self.circle_lock)
-        self.circle_check.set_tooltip_text(
-            "Force a perfect circle instead of a free ellipse — while drawing "
-            "and while resizing.\nOff: free ellipse.  Hold Shift to invert.")
-        self.circle_check.connect("toggled", self._on_circle_toggled)
-        self.circle_ctl.pack_start(self.circle_check, False, False, 0)
-        toolbar.pack_start(self.circle_ctl, False, False, 0)
-        self._hand_on_hover(self.circle_check)
-
-        # strict crop aspect ratio (or Free)
-        self.crop_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.crop_ctl.pack_start(Gtk.Label(label="Ratio"), False, False, 0)
-        self.ratio_combo = Gtk.ComboBoxText()
-        for label, _r in CROP_RATIOS:
-            self.ratio_combo.append_text(label)
-        cur = self.cfg.get("crop_ratio", "Free")
-        labels = [lbl for lbl, _r in CROP_RATIOS]
-        self.ratio_combo.set_active(labels.index(cur) if cur in labels else 0)
-        self.ratio_combo.set_tooltip_text(
-            "Hold the crop to a strict aspect ratio.\n"
-            "Shift frees a set ratio, or squares a free crop.")
-        self.ratio_combo.connect("changed", self._on_ratio_changed)
-        self.crop_ctl.pack_start(self.ratio_combo, False, False, 0)
-        toolbar.pack_start(self.crop_ctl, False, False, 0)
-        self._hand_on_hover(self.ratio_combo)
-
-        # font family + size (only for the Text tool / selected text)
-        self.font_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self._fonts = _available_fonts()
-        self.font_combo = Gtk.ComboBoxText()
-        for fam in self._fonts:
-            self.font_combo.append_text(fam)
-        self.font_combo.set_active(self._fonts.index(self.text_font)
-                                   if self.text_font in self._fonts else 0)
-        self.font_combo.set_tooltip_text("Text font")
-        self.font_combo.connect("changed", self._on_font_family)
-        self.font_ctl.pack_start(self.font_combo, False, False, 0)
-        self.font_ctl.pack_start(Gtk.Label(label="Size"), False, False, 0)
-        fadj = Gtk.Adjustment(value=self.font_size, lower=8, upper=160, step_increment=2)
-        self.font_spin = Gtk.SpinButton(adjustment=fadj, climb_rate=1, digits=0)
-        self.font_spin.set_tooltip_text("Text font size")
-        self.font_spin.connect("value-changed", self._on_font_changed)
-        self.font_ctl.pack_start(self.font_spin, False, False, 0)
-        # alignment buttons
-        self.align_buttons = {}
-        agrp = None
-        for key, icon, tip in [
-                ("left", "format-justify-left-symbolic", "Align left"),
-                ("center", "format-justify-center-symbolic", "Centre"),
-                ("right", "format-justify-right-symbolic", "Align right"),
-                ("justify", "format-justify-fill-symbolic", "Justify")]:
-            b = Gtk.RadioButton.new_from_widget(agrp)
-            b.set_mode(False)
-            b.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON))
-            b.set_tooltip_text(tip)
-            b.connect("toggled", self._on_align, key)
-            agrp = agrp or b
-            self.font_ctl.pack_start(b, False, False, 0)
-            self.align_buttons[key] = b
-            self._hand_on_hover(b)
-        toolbar.pack_start(self.font_ctl, False, False, 0)
-
-        # blur strength (only for the Blur tool)
-        self.blur_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.blur_ctl.pack_start(Gtk.Label(label="Blur"), False, False, 0)
-        badj = Gtk.Adjustment(value=self.blur_block, lower=2, upper=60, step_increment=1)
-        self.blur_spin = Gtk.SpinButton(adjustment=badj, climb_rate=1, digits=0)
-        self.blur_spin.set_tooltip_text("Blur / pixelation strength")
-        self.blur_spin.connect("value-changed", self._on_blur_changed)
-        self.blur_ctl.pack_start(self.blur_spin, False, False, 0)
-        toolbar.pack_start(self.blur_ctl, False, False, 4)
-
-        # spotlight darkness (only when a spotlight is active/selected)
-        self.dark_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.dark_ctl.pack_start(Gtk.Label(label="Spotlight Darkness"), False, False, 0)
-        dadj = Gtk.Adjustment(value=self.spotlight_darkness * 100, lower=0, upper=95,
-                              step_increment=5)
-        self.dark_spin = Gtk.SpinButton(adjustment=dadj, climb_rate=1, digits=0)
-        self.dark_spin.set_tooltip_text("How dark the area outside the focus is")
-        self.dark_spin.connect("value-changed", self._on_dark_changed)
-        self.dark_ctl.pack_start(self.dark_spin, False, False, 0)
-        toolbar.pack_start(self.dark_ctl, False, False, 4)
-
-        self._add_sep(toolbar)
-
-        # color swatches (circular, grouped, with a selection ring)
+        # colour: swatches + custom, in their own group
         swgroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         swgroup.get_style_context().add_class("cs-group")
         toolbar.pack_start(swgroup, False, False, 0)
         self._swatches = []
         for hexc in self.cfg["palette"]:
             sw = Gtk.Button()
-            sw.set_size_request(22, 22)
+            sw.set_size_request(20, 20)
+            sw.set_valign(Gtk.Align.CENTER)
             sw.set_tooltip_text(hexc)
             sw.get_style_context().add_class("cs-swatch")
             self._style_swatch(sw, hexc)
@@ -451,33 +438,149 @@ class Editor(Gtk.Window):
             swgroup.pack_start(sw, False, False, 0)
             self._swatches.append((sw, hexc.lower()))
             self._hand_on_hover(sw)
-
-        # custom color
-        self.color_btn = Gtk.ColorButton()
-        rgba = Gdk.RGBA(); rgba.parse(self.color)
-        self.color_btn.set_rgba(rgba)
-        self.color_btn.set_tooltip_text("Custom colour")
+        self.color_btn = _ColorWell(self, self.color)
+        self.color_btn.set_tooltip_text("Custom colour…")
+        self.color_btn.set_valign(Gtk.Align.CENTER)
+        self.color_btn.get_style_context().add_class("cs-colorwell")
         self.color_btn.connect("color-set", self.on_custom_color)
-        toolbar.pack_start(self.color_btn, False, False, 2)
+        swgroup.pack_start(self.color_btn, False, False, 2)
         self._hand_on_hover(self.color_btn)
-        self._update_swatch_selection(self.color)  # ring the current colour
+        self._update_swatch_selection(self.color)
 
-        # zoom controls (right end of the toolbar)
-        toolbar.pack_end(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
-        zin = Gtk.Button.new_from_icon_name("zoom-in-symbolic", Gtk.IconSize.BUTTON)
-        zin.set_tooltip_text("Zoom in (+ , or Ctrl+scroll)")
-        zin.connect("clicked", lambda *_: self.set_zoom(self._zoom * 1.25))
-        zfit = Gtk.Button.new_from_icon_name("zoom-fit-best-symbolic", Gtk.IconSize.BUTTON)
-        zfit.set_tooltip_text("Fit to window (Ctrl+0)")
-        zfit.connect("clicked", lambda *_: self.reset_zoom())
-        zout = Gtk.Button.new_from_icon_name("zoom-out-symbolic", Gtk.IconSize.BUTTON)
-        zout.set_tooltip_text("Zoom out (−)")
-        zout.connect("clicked", lambda *_: self.set_zoom(self._zoom / 1.25))
-        for b in (zout, zfit, zin):
-            toolbar.pack_end(b, False, False, 0)
+        # ---- contextual controls: only the ones for the active tool or
+        #      selection are visible (no_show_all keeps show_all() from
+        #      revealing them all at once, which used to size the window to
+        #      the sum of every control) ----
+        ctx = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        toolbar.pack_start(ctx, False, False, 0)
+
+        # stroke thickness (new shapes AND the selected shape)
+        self.width_scale, self.thick_ctl = self._slider_control(
+            "stroke", "Stroke thickness", self.width, 1, 40, 1, self._on_width_changed,
+            curve=2.0)
+        ctx.pack_start(self.thick_ctl, False, False, 0)
+
+        # lock toggles, shown as chips
+        self.snap_check = self._chip(f"{self.SNAP_DEG}° snap", self.snap_angles,
+                                     f"Lock lines and arrows to {self.SNAP_DEG}° steps.\n"
+                                     "Off: hold Shift to snap.  On: hold Shift for a free angle.",
+                                     self._on_snap_toggled)
+        self.snap_ctl = self.snap_check
+        self.straight_check = self._chip("Straight", self.highlight_straight,
+                                         "Lay the highlighter down as one straight stroke, snapped to "
+                                         f"{self.SNAP_DEG}° steps — so it follows a line of text.\n"
+                                         "Off: the stroke follows your hand.  Hold Shift to invert.",
+                                         self._on_straight_toggled)
+        self.hl_ctl = self.straight_check
+        self.circle_check = self._chip("Circle", self.circle_lock,
+                                       "Force a perfect circle instead of a free ellipse.\n"
+                                       "Off: free ellipse.  Hold Shift to invert.",
+                                       self._on_circle_toggled)
+        self.circle_ctl = self.circle_check
+        for c in (self.snap_ctl, self.hl_ctl, self.circle_ctl):
+            ctx.pack_start(c, False, False, 0)
+        # a divider between the slider and the lock options, visible only
+        # when one of the lock options is
+        self._lock_div = Gtk.Box()
+        self._lock_div.get_style_context().add_class("cs-divider")
+        ctx.pack_start(self._lock_div, False, False, 0)
+        ctx.reorder_child(self._lock_div, 1)
+
+        # crop aspect ratio: a menu button listing the ratios
+        cur = self.cfg.get("crop_ratio", "Free")
+        if cur not in dict(CROP_RATIOS):
+            cur = "Free"
+        self.crop_ctl, self._ratio_label = self._menu_button(
+            cur, "Hold the crop to a strict aspect ratio.\n"
+                 "Shift frees a set ratio, or squares a free crop.")
+        pop, grid = self._popover_grid(self.crop_ctl, "Aspect ratio")
+        self._ratio_buttons = {}
+        rgrp = None
+        for i, (label, _r) in enumerate(CROP_RATIOS):
+            b = Gtk.RadioButton.new_with_label_from_widget(rgrp, label)
+            b.set_mode(False)
+            b.get_style_context().add_class("cs-row")
+            b.set_active(label == cur)
+            b.connect("toggled", self._on_ratio_toggled, label, pop)
+            rgrp = rgrp or b
+            grid.attach(b, i % 2, 1 + i // 2, 1, 1)
+            self._ratio_buttons[label] = b
+        grid.show_all()
+        ctx.pack_start(self.crop_ctl, False, False, 0)
+
+        # text: family (menu listing each font in its own face), size, alignment
+        self.font_ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._fonts = _available_fonts()
+        if self.text_font not in self._fonts:
+            self.text_font = self._fonts[0]
+        self.font_btn, self._font_label = self._menu_button(self.text_font, "Text font")
+        fpop, fgrid = self._popover_grid(self.font_btn, "Font")
+        fgrp = None
+        self._font_buttons = {}
+        for i, fam in enumerate(self._fonts):
+            b = Gtk.RadioButton.new_from_widget(fgrp)
+            b.set_mode(False)
+            lab = Gtk.Label(xalign=0)
+            lab.set_markup(f'<span font_family="{GLib.markup_escape_text(fam)}">'
+                           f'{GLib.markup_escape_text(fam)}</span>')
+            b.add(lab)
+            b.get_style_context().add_class("cs-row")
+            b.set_active(fam == self.text_font)
+            b.connect("toggled", self._on_font_toggled, fam, fpop)
+            fgrp = fgrp or b
+            fgrid.attach(b, 0, 1 + i, 2, 1)
+            self._font_buttons[fam] = b
+        fgrid.show_all()
+        self.font_ctl.pack_start(self.font_btn, False, False, 0)
+        fadj = Gtk.Adjustment(value=self.font_size, lower=8, upper=160, step_increment=2)
+        self.font_spin = Gtk.SpinButton(adjustment=fadj, climb_rate=1, digits=0)
+        self.font_spin.set_tooltip_text("Text size")
+        self.font_spin.set_width_chars(3)
+        self.font_spin.set_valign(Gtk.Align.CENTER)
+        self.font_spin.connect("value-changed", self._on_font_changed)
+        self.font_ctl.pack_start(self.font_spin, False, False, 0)
+        agroup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=1)
+        agroup.get_style_context().add_class("cs-group")
+        self.align_buttons = {}
+        self._align_images = {}
+        agrp = None
+        for key, tip in [("left", "Align left"), ("center", "Centre"),
+                         ("right", "Align right"), ("justify", "Justify")]:
+            b = Gtk.RadioButton.new_from_widget(agrp)
+            b.set_mode(False)
+            img = Gtk.Image.new_from_surface(
+                icons.surface("align-" + key, 16, self._pal["icon"], sc))
+            b.set_image(img)
+            b.set_always_show_image(True)
+            b.get_style_context().add_class("cs-tool")
+            b.set_tooltip_text(tip)
+            b.connect("toggled", self._on_align, key)
+            agrp = agrp or b
+            agroup.pack_start(b, False, False, 0)
+            self.align_buttons[key] = b
+            self._align_images[key] = img
             self._hand_on_hover(b)
+        self.font_ctl.pack_start(agroup, False, False, 0)
+        ctx.pack_start(self.font_ctl, False, False, 0)
 
-        # canvas in an overlay (so we can float a text entry on it)
+        # blur strength / spotlight darkness: direct sliders (1:1 feedback)
+        self.blur_spin, self.blur_ctl = self._slider_control(
+            "drop", "Blur / pixelation strength", self.blur_block, 2, 60, 1,
+            self._on_blur_changed, curve=1.6)
+        ctx.pack_start(self.blur_ctl, False, False, 0)
+        self.dark_spin, self.dark_ctl = self._slider_control(
+            "moon", "How dark the area outside the spotlight is (%)",
+            self.spotlight_darkness * 100, 0, 95, 5, self._on_dark_changed)
+        ctx.pack_start(self.dark_ctl, False, False, 0)
+
+        for w in (self.thick_ctl, self.snap_ctl, self.hl_ctl, self.circle_ctl,
+                  self.crop_ctl, self.font_ctl, self.blur_ctl, self.dark_ctl,
+                  self._lock_div):
+            w.show_all()            # children visible (show_all is a no-op
+            w.set_no_show_all(True)  # once no_show_all is set), then park
+            w.hide()                 # the control until its tool is active
+
+        # ---- canvas, with floating capsules for zoom and crop ----
         self.canvas = Gtk.DrawingArea()
         self.canvas.set_can_focus(True)  # so it can take key input for text editing
         self.canvas.add_events(
@@ -490,6 +593,7 @@ class Editor(Gtk.Window):
         self.canvas.connect("button-release-event", self.on_canvas_release)
         self.canvas.connect("motion-notify-event", self.on_canvas_motion)
         self.canvas.connect("scroll-event", self.on_canvas_scroll)
+        self.canvas.connect("size-allocate", lambda *_: self._update_zoom_label())
         self.canvas.connect("realize",
                              lambda *_: self._set_canvas_cursor(self._tool_cursor()))
 
@@ -497,28 +601,252 @@ class Editor(Gtk.Window):
         self.overlay.add(self.canvas)
         root.pack_start(self.overlay, True, True, 0)
 
-        # crop apply/cancel bar (hidden until crop drawn)
+        zoom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        zoom.get_style_context().add_class("cs-float")
+        zoom.set_halign(Gtk.Align.END)
+        zoom.set_valign(Gtk.Align.END)
+        zoom.set_margin_end(14)
+        zoom.set_margin_bottom(14)
+        zoom.pack_start(self._icon_button("zoom-out", "Zoom out (−)",
+                                          lambda *_: self.set_zoom(self._zoom / 1.25), 16),
+                        False, False, 0)
+        self.zoom_label = Gtk.Button(label="100%")
+        self.zoom_label.get_style_context().add_class("cs-flat")
+        self.zoom_label.set_tooltip_text("Fit to window (Ctrl+0)")
+        self.zoom_label.connect("clicked", lambda *_: self.reset_zoom())
+        self._hand_on_hover(self.zoom_label)
+        zoom.pack_start(self.zoom_label, False, False, 0)
+        zoom.pack_start(self._icon_button("zoom-in", "Zoom in (+, or Ctrl+scroll)",
+                                          lambda *_: self.set_zoom(self._zoom * 1.25), 16),
+                        False, False, 0)
+        self.overlay.add_overlay(zoom)
+
+        # crop apply/cancel capsule (hidden until a crop is drawn)
         self.crop_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.crop_bar.get_style_context().add_class("cs-float")
         self.crop_bar.set_halign(Gtk.Align.CENTER)
         self.crop_bar.set_valign(Gtk.Align.END)
-        self.crop_bar.set_margin_bottom(16)
-        apply_b = Gtk.Button(label="Apply crop")
-        apply_b.get_style_context().add_class("suggested-action")
-        apply_b.connect("clicked", lambda *_: self.apply_crop())
+        self.crop_bar.set_margin_bottom(14)
         cancel_b = Gtk.Button(label="Cancel")
+        cancel_b.get_style_context().add_class("cs-flat")
         cancel_b.connect("clicked", lambda *_: self.cancel_crop())
-        self.crop_bar.pack_start(apply_b, False, False, 0)
+        apply_b = Gtk.Button(label="Apply Crop")
+        apply_b.get_style_context().add_class("cs-primary")
+        apply_b.set_tooltip_text("Apply (Enter)")
+        apply_b.connect("clicked", lambda *_: self.apply_crop())
         self.crop_bar.pack_start(cancel_b, False, False, 0)
+        self.crop_bar.pack_start(apply_b, False, False, 0)
+        self.crop_bar.set_no_show_all(True)
+        cancel_b.show(); apply_b.show()
         self.overlay.add_overlay(self.crop_bar)
+
+        self.connect("notify::scale-factor", lambda *_: self._recolor_icons())
 
         # everything is built now -> activate the default tool
         self.tool_buttons["arrow"].set_active(True)
+        self._update_tool_controls()
 
-    def _on_width_changed(self, spin):
-        self.width = spin.get_value()
+    # Tools after which a hairline divider is drawn (select | shapes | ink |
+    # marks | redaction | crop).
+    _TOOL_BREAKS = ("arrow", "pen", "counter", "crop")
+
+    # ------------------------------------------------------ widget builders
+    def _icon_button(self, icon, tip, cb, size=18):
+        b = Gtk.Button()
+        img = Gtk.Image.new_from_surface(
+            icons.surface(icon, size, self._pal["icon"], self.get_scale_factor()))
+        b.set_image(img)
+        b.set_always_show_image(True)
+        b.get_style_context().add_class("cs-flat")
+        b.get_style_context().add_class("cs-icon")
+        b.set_tooltip_text(tip)
+        b.set_valign(Gtk.Align.CENTER)
+        b.connect("clicked", cb)
+        self._chrome_icons = getattr(self, "_chrome_icons", [])
+        self._chrome_icons.append((img, icon, size))
+        self._hand_on_hover(b)
+        return b
+
+    def _chip(self, label, active, tip, cb):
+        """An on/off option shown as a labelled checkbox."""
+        b = Gtk.CheckButton(label=label)
+        b.set_active(active)
+        b.get_style_context().add_class("cs-check")
+        b.set_tooltip_text(tip)
+        b.set_valign(Gtk.Align.CENTER)
+        b.connect("toggled", cb)
+        self._hand_on_hover(b)
+        return b
+
+    def _slider_control(self, icon, tip, value, lo, hi, step, cb, curve=1.0):
+        """[glyph] [slider] [value] — returns (scale, container).
+
+        With curve > 1 the slider position maps to the value on a power
+        curve, so small values (where a 1px difference matters) get most of
+        the travel and large ones stay reachable.  cb receives the value.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        box.get_style_context().add_class("cs-slider")
+        box.set_tooltip_text(tip)
+        img = Gtk.Image.new_from_surface(
+            icons.surface(icon, 16, self._pal["icon"], self.get_scale_factor()))
+        self._chrome_icons = getattr(self, "_chrome_icons", [])
+        self._chrome_icons.append((img, icon, 16))
+        box.pack_start(img, False, False, 4)
+        span = float(hi - lo)
+
+        def to_value(pos):
+            v = lo + span * (pos / 1000.0) ** curve
+            return max(lo, min(hi, round(v / step) * step))
+
+        def to_pos(v):
+            t = max(0.0, min(1.0, (v - lo) / span))
+            return 1000.0 * t ** (1.0 / curve)
+
+        adj = Gtk.Adjustment(value=to_pos(value), lower=0, upper=1000,
+                             step_increment=1, page_increment=50)
+        scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj)
+        scale.set_draw_value(False)
+        scale.set_size_request(150, 28)   # tall hit area; track drawn centred
+        scale.set_valign(Gtk.Align.CENTER)
+        val = Gtk.Label(label=str(int(round(value))))
+        val.get_style_context().add_class("cs-value")
+        val.set_width_chars(2)
+        val.set_xalign(0.0)
+
+        last = [to_value(to_pos(value))]
+
+        def changed(sc):
+            v = to_value(sc.get_value())
+            if v == last[0]:
+                return
+            last[0] = v
+            val.set_text(str(int(round(v))))
+            cb(v)
+
+        def nudge(direction):
+            # arrow keys / wheel move one real step, not one slider pixel
+            v = max(lo, min(hi, last[0] + direction * step))
+            scale.set_value(to_pos(v))
+
+        def on_scroll(_w, ev):
+            ok, dx, dy = ev.get_scroll_deltas()
+            if ev.direction == Gdk.ScrollDirection.UP or (ok and dy < 0):
+                nudge(+1)
+            elif ev.direction == Gdk.ScrollDirection.DOWN or (ok and dy > 0):
+                nudge(-1)
+            return True
+
+        def on_key(_w, ev):
+            if ev.keyval in (Gdk.KEY_Right, Gdk.KEY_Up):
+                nudge(+1); return True
+            if ev.keyval in (Gdk.KEY_Left, Gdk.KEY_Down):
+                nudge(-1); return True
+            return False
+
+        scale.connect("value-changed", changed)
+        box.add_events(Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.SMOOTH_SCROLL_MASK)
+        scale.connect("scroll-event", on_scroll)
+        scale.connect("key-press-event", on_key)
+        box.pack_start(scale, False, False, 0)
+        box.pack_start(val, False, False, 6)
+        self._hand_on_hover(scale)
+        return scale, box
+
+    def _menu_button(self, text, tip):
+        """A compact 'Label ⌄' button that opens a popover."""
+        mb = Gtk.MenuButton()
+        mb.get_style_context().add_class("cs-chip")
+        mb.set_tooltip_text(tip)
+        mb.set_valign(Gtk.Align.CENTER)
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        lab = Gtk.Label(label=text)
+        lab.set_max_width_chars(14)
+        lab.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        inner.pack_start(lab, False, False, 0)
+        chev = Gtk.Image.new_from_surface(
+            icons.surface("chevron", 12, self._pal["icon"], self.get_scale_factor()))
+        self._chrome_icons = getattr(self, "_chrome_icons", [])
+        self._chrome_icons.append((chev, "chevron", 12))
+        inner.pack_start(chev, False, False, 0)
+        mb.add(inner)
+        self._hand_on_hover(mb)
+        return mb, lab
+
+    def _popover_grid(self, menubutton, caption):
+        pop = Gtk.Popover()
+        pop.get_style_context().add_class("cs-popover")
+        grid = Gtk.Grid(column_spacing=4, row_spacing=2)
+        grid.get_style_context().add_class("cs-pop")
+        cap = Gtk.Label(label=caption.upper(), xalign=0)
+        cap.get_style_context().add_class("cs-caption")
+        cap.set_margin_bottom(4)
+        cap.set_margin_start(4)
+        grid.attach(cap, 0, 0, 2, 1)
+        grid.show_all()
+        pop.add(grid)
+        menubutton.set_popover(pop)
+        return pop, grid
+
+    def _on_ratio_toggled(self, btn, label, pop):
+        if not btn.get_active():
+            return
+        self._ratio_label.set_text(label)
+        self._set_ratio(label)
+        pop.popdown()
+
+    def _on_font_toggled(self, btn, fam, pop):
+        if not btn.get_active():
+            return
+        self._font_label.set_text(fam)
+        self._on_font_family(fam)
+        pop.popdown()
+
+    def _update_subtitle(self):
+        hdr = getattr(self, "header", None)
+        if hdr is not None:
+            hdr.props.subtitle = f"{self.base_image.width} × {self.base_image.height}"
+
+    def _update_zoom_label(self):
+        lab = getattr(self, "zoom_label", None)
+        if lab is None or self.canvas.get_allocated_width() <= 1:
+            return
+        scale, _, _ = self._layout()
+        lab.set_label(f"{round(scale * self._device_scale() * 100)}%")
+
+    def _recolor_icons(self):
+        """Re-render every custom glyph for the current theme and monitor
+        scale; the selected tool and alignment get white glyphs on accent."""
+        sc = self.get_scale_factor()
+        white = (1, 1, 1, 1)
+        for key, img in getattr(self, "_tool_images", {}).items():
+            on = self.tool_buttons[key].get_active()
+            img.set_from_surface(icons.surface(key, 18, white if on else self._pal["icon"], sc))
+        for key, img in getattr(self, "_align_images", {}).items():
+            on = self.align_buttons[key].get_active()
+            img.set_from_surface(icons.surface("align-" + key, 16,
+                                               white if on else self._pal["icon"], sc))
+        for img, name, size in getattr(self, "_chrome_icons", []):
+            img.set_from_surface(icons.surface(name, size, self._pal["icon"], sc))
+
+    def _coalesced_undo(self, key):
+        """Push one undo step per continuous slider gesture, not one per tick:
+        a drag that changes the same property of the same shape within a short
+        window is a single edit."""
+        import time
+        now = time.monotonic()
+        last = getattr(self, "_coalesce", None)
+        if last and last[0] == key and now - last[1] < 0.8:
+            self._coalesce = (key, now)
+            return
+        self._coalesce = (key, now)
+        self._push_undo()
+
+    def _on_width_changed(self, value):
+        self.width = value
         sel = self.selected
         if sel is not None and hasattr(sel, "width"):
-            self._push_undo()
+            self._coalesced_undo(("width", id(sel)))
             sel.width = self.width
             self.canvas.queue_draw()
 
@@ -545,8 +873,8 @@ class Editor(Gtk.Window):
             self.selected.set_bbox(*self._square_bbox(self.selected.bbox(), "se"))
             self.canvas.queue_draw()
 
-    def _on_ratio_changed(self, combo):
-        label = combo.get_active_text() or "Free"
+    def _set_ratio(self, label):
+        label = label or "Free"
         self.crop_ratio = dict(CROP_RATIOS).get(label)
         self.cfg["crop_ratio"] = label
         config.save(self.cfg)
@@ -650,7 +978,8 @@ class Editor(Gtk.Window):
         # button emits "toggled" on creation), so bail out until it's all there.
         if any(getattr(self, n, None) is None
                for n in ("thick_ctl", "snap_ctl", "hl_ctl", "circle_ctl",
-                         "crop_ctl", "font_ctl", "blur_ctl", "dark_ctl")):
+                         "crop_ctl", "font_ctl", "blur_ctl", "dark_ctl",
+                         "_lock_div")):
             return
         t = self.tool
         text_ctx = (t == "text" or self.editing_text is not None
@@ -667,7 +996,9 @@ class Editor(Gtk.Window):
                                     or isinstance(self.selected, tools.Ellipse))
         self.crop_ctl.set_visible(t == "crop")
         self.thick_ctl.set_visible(
-            not text_ctx and not spot_ctx and t != "blur")
+            not text_ctx and not spot_ctx and t not in ("blur", "crop"))
+        self._lock_div.set_visible(any(
+            w.get_visible() for w in (self.snap_ctl, self.hl_ctl, self.circle_ctl)))
 
     def _on_font_changed(self, spin):
         self.font_size = spin.get_value()
@@ -676,7 +1007,7 @@ class Editor(Gtk.Window):
             if sel is self.editing_text:
                 self._ensure_edit_undo()
             else:
-                self._push_undo()
+                self._coalesced_undo(("size", id(sel)))
             sel.size = self.font_size
             self.canvas.queue_draw()
 
@@ -689,12 +1020,10 @@ class Editor(Gtk.Window):
         self._pal = theme_mod.palette(dark)
         self._canvas_bg = self._pal["canvas"]
         install_theme(dark)
-        for key, img in getattr(self, "_tool_images", {}).items():
-            img.set_from_pixbuf(icons.pixbuf(key, 18, self._pal["icon"]))
+        self._recolor_icons()
         self.canvas.queue_draw()
 
-    def _on_font_family(self, combo):
-        fam = combo.get_active_text()
+    def _on_font_family(self, fam):
         if not fam:
             return
         self.text_font = fam
@@ -709,19 +1038,28 @@ class Editor(Gtk.Window):
             tgt.font = fam
             self.canvas.queue_draw()
 
-    def _on_blur_changed(self, spin):
-        self.blur_block = int(spin.get_value())
+    def _on_blur_changed(self, value):
+        # Re-pixelating the whole image is the expensive part; do it once the
+        # slider pauses (~50 ms) rather than on every tick of a drag.
+        self.blur_block = int(value)
+        if getattr(self, "_blur_src", None):
+            GLib.source_remove(self._blur_src)
+        self._blur_src = GLib.timeout_add(50, self._apply_blur_change)
+
+    def _apply_blur_change(self):
+        self._blur_src = None
         self._rebuild_surfaces()
         self.canvas.queue_draw()
+        return False
 
-    def _on_dark_changed(self, spin):
-        self.spotlight_darkness = spin.get_value() / 100.0
+    def _on_dark_changed(self, value):
+        self.spotlight_darkness = value / 100.0
         # All spotlights share one combined dim layer, so the darkness applies
         # to every focus zone — not just the selected one (which, via the
         # max-darkness blend, made the slider look dead with 2+ zones).
         spots = [a for a in self.annotations if isinstance(a, tools.Spotlight)]
         if spots:
-            self._push_undo()
+            self._coalesced_undo(("darkness",))
             for s in spots:
                 s.darkness = self.spotlight_darkness
             self.canvas.queue_draw()
@@ -731,11 +1069,6 @@ class Editor(Gtk.Window):
         css = f"button {{ background-image:none; background-color:{hexc}; }}".encode()
         prov = Gtk.CssProvider(); prov.load_from_data(css)
         btn.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-    def _add_sep(self, toolbar):
-        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep.get_style_context().add_class("cs-sep")
-        toolbar.pack_start(sep, False, False, 2)
 
     def _update_swatch_selection(self, hexc):
         hexc = (hexc or "").lower()
@@ -801,11 +1134,13 @@ class Editor(Gtk.Window):
         self._panx = cx - (a.width - iw * scale) / 2 - ix * scale
         self._pany = cy - (a.height - ih * scale) / 2 - iy * scale
         self._clamp_pan()
+        self._update_zoom_label()
         self.canvas.queue_draw()
 
     def reset_zoom(self):
         self._zoom = 1.0
         self._panx = self._pany = 0.0
+        self._update_zoom_label()
         self.canvas.queue_draw()
 
     def on_canvas_scroll(self, _w, ev):
@@ -854,6 +1189,7 @@ class Editor(Gtk.Window):
             self._update_tool_controls()
             self._set_canvas_cursor(self._tool_cursor())
             if getattr(self, "canvas", None) is not None:
+                self._recolor_icons()
                 self.canvas.queue_draw()
 
     def _tool_cursor(self):
@@ -1417,6 +1753,7 @@ class Editor(Gtk.Window):
     def _on_align(self, btn, key):
         if not btn.get_active():
             return
+        self._recolor_icons()
         self.text_align = key
         tgt = self.editing_text
         if tgt is None and isinstance(self.selected, tools.Text):
@@ -1714,6 +2051,8 @@ class Editor(Gtk.Window):
         cr.rectangle(0, 0, a.width, a.height)
         cr.fill()
         scale, ox, oy = self._layout()
+        self._draw_image_shadow(cr, ox, oy, self.base_image.width * scale,
+                                self.base_image.height * scale)
         cr.save()
         cr.translate(ox, oy)
         cr.scale(scale, scale)
@@ -1765,6 +2104,24 @@ class Editor(Gtk.Window):
         elif self.selected is not None:
             self._draw_box_frame(cr, self.selected, dashed=True)
         return False
+
+    def _draw_image_shadow(self, cr, x, y, w, h):
+        """Lift the screenshot off the canvas: a soft, slightly offset ambient
+        shadow (stacked translucent rounded rects — cheap, no blur pass) and a
+        hairline edge so light-on-light and dark-on-dark captures keep a
+        visible boundary."""
+        strength = self._pal.get("shadow", 0.4)
+        layers = 10
+        for i in range(layers, 0, -1):
+            spread = i * 1.8
+            cr.set_source_rgba(0, 0, 0, strength * 0.045 * (1 - i / (layers + 1)) * 2)
+            icons._round_rect(cr, x - spread, y - spread + 3, w + 2 * spread,
+                              h + 2 * spread, spread + 2)
+            cr.fill()
+        cr.set_line_width(1)
+        cr.set_source_rgba(*((1, 1, 1, 0.10) if self._dark else (0, 0, 0, 0.12)))
+        cr.rectangle(x - 0.5, y - 0.5, w + 1, h + 1)
+        cr.stroke()
 
     def _draw_text_selection(self, cr):
         """Tint the selected characters, under the glyphs."""
@@ -1986,25 +2343,12 @@ class Editor(Gtk.Window):
             export.notify("Upload failed", err or "")
         return False
 
-    def _on_present_signal(self):
-        """Another capture was requested while we're open — surface this editor."""
-        try:
-            self.deiconify()
-            self.present()
-        except Exception:
-            pass
-        return True  # keep the handler installed
-
     def run(self):
         """Show the editor; returns the surface to pin (or None)."""
-        import signal as _signal
-        from gi.repository import GLib
-        from . import lock
-
         self.pending_pin = None
         self.show_all()
-        self.crop_bar.hide()
-        self._update_tool_controls()  # hide contextual controls show_all revealed
+        self._update_tool_controls()
+        GLib.idle_add(self._fit_to_monitor)
         # Follow a live light/dark switch while open.
         try:
             from gi.repository import Gio
@@ -2013,13 +2357,5 @@ class Editor(Gtk.Window):
                                          lambda *_: self._reapply_theme())
         except Exception:
             self._theme_settings = None
-        # Let a second capture bring this editor to the front (SIGUSR1).
-        lock.write_active_pid()
-        sig = GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, _signal.SIGUSR1,
-                                   self._on_present_signal)
-        try:
-            Gtk.main()
-        finally:
-            GLib.source_remove(sig)
-            lock.clear_active_pid()
+        Gtk.main()
         return self.pending_pin
