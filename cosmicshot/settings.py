@@ -51,50 +51,144 @@ def _capture_accel(parent):
     return result["accel"] if resp == Gtk.ResponseType.OK else None
 
 
+def _card(rows):
+    """An inset grouped list: rounded card, rows split by hairlines."""
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    card.get_style_context().add_class("cs-card")
+    for i, row in enumerate(rows):
+        if i:
+            sep = Gtk.Box()
+            sep.get_style_context().add_class("cs-card-sep")
+            card.pack_start(sep, False, False, 0)
+            row._cs_sep = sep
+        card.pack_start(row, False, False, 0)
+    return card
+
+
+def _row(title, control=None, subtitle=None):
+    """Label on the left (optional dim subtitle under it), control on the right."""
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    row.get_style_context().add_class("cs-card-row")
+    text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+    text.set_valign(Gtk.Align.CENTER)
+    lab = Gtk.Label(label=title, xalign=0)
+    text.pack_start(lab, False, False, 0)
+    if subtitle:
+        sub = Gtk.Label(label=subtitle, xalign=0)
+        sub.get_style_context().add_class("cs-hero-sub")
+        sub.set_line_wrap(True)
+        text.pack_start(sub, False, False, 0)
+    row.pack_start(text, True, True, 0)
+    if control is not None:
+        control.set_valign(Gtk.Align.CENTER)
+        row.pack_end(control, False, False, 0)
+    return row
+
+
+def _section(title, card, footer=None):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    if title:
+        t = Gtk.Label(label=title.upper(), xalign=0)
+        t.get_style_context().add_class("cs-section-title")
+        box.pack_start(t, False, False, 0)
+    box.pack_start(card, False, False, 0)
+    if footer is not None:
+        box.pack_start(footer, False, False, 0)
+    return box
+
+
+def _footer(text=""):
+    lab = Gtk.Label(label=text, xalign=0)
+    lab.get_style_context().add_class("cs-footer")
+    lab.set_line_wrap(True)
+    lab.set_max_width_chars(60)
+    return lab
+
+
+def _button(label, style="cs-secondary"):
+    b = Gtk.Button(label=label)
+    b.get_style_context().add_class(style)
+    return b
+
+
 class SettingsWindow:
     def __init__(self, cfg=None):
+        from . import theme
         self.cfg = cfg or config.load()
         self._latest = None  # cached update info
+        theme.install(theme.is_dark())
         self.win = Gtk.Window(title="CosmicShot Settings")
-        self.win.set_default_size(520, 0)
+        self.win.get_style_context().add_class("cs-window")
         self.win.set_position(Gtk.WindowPosition.CENTER)
-        self.win.set_border_width(18)
+        self.win.set_default_size(560, 680)
 
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        self.win.add(root)
+        header = Gtk.HeaderBar()
+        header.set_show_close_button(True)
+        header.props.title = "Settings"
+        self.win.set_titlebar(header)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_max_content_height(760)
+        self.win.add(scroller)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
+        root.get_style_context().add_class("cs-settings")
+        root.get_style_context().add_class("cs-root")
+        scroller.add(root)
         root.pack_start(self._version_section(), False, False, 0)
-        root.pack_start(Gtk.Separator(), False, False, 0)
         root.pack_start(self._shortcuts_section(), False, False, 0)
-        root.pack_start(Gtk.Separator(), False, False, 0)
         root.pack_start(self._upload_section(), False, False, 0)
 
     # -- version / updates ----------------------------------------------
     def _version_section(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        title = Gtk.Label(xalign=0)
-        title.set_markup(f"<b>CosmicShot</b>  ·  version {config.VERSION}")
-        box.pack_start(title, False, False, 0)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
 
+        hero = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        icon = config.icon_path()
+        if icon:
+            try:
+                from gi.repository import GdkPixbuf
+                sc = self.win.get_scale_factor()
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_size(icon, 64 * sc, 64 * sc)
+                surf = Gdk.cairo_surface_create_from_pixbuf(pb, sc, None)
+                hero.pack_start(Gtk.Image.new_from_surface(surf), False, False, 0)
+            except Exception:
+                pass
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text.set_valign(Gtk.Align.CENTER)
+        name = Gtk.Label(label=config.APP_NAME, xalign=0)
+        name.get_style_context().add_class("cs-hero-name")
+        text.pack_start(name, False, False, 0)
+        ver = Gtk.Label(label=f"Version {config.VERSION}", xalign=0)
+        ver.get_style_context().add_class("cs-hero-sub")
+        text.pack_start(ver, False, False, 0)
         self._status = Gtk.Label(xalign=0, label="")
-        self._status.get_style_context().add_class("dim-label")
-        box.pack_start(self._status, False, False, 0)
+        self._status.get_style_context().add_class("cs-hero-sub")
+        self._status.set_line_wrap(True)
+        text.pack_start(self._status, False, False, 0)
+        hero.pack_start(text, True, True, 0)
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._check_btn = Gtk.Button(label="Check for updates")
-        self._check_btn.connect("clicked", lambda _b: self._check(manual=True))
-        row.pack_start(self._check_btn, False, False, 0)
-        self._update_btn = Gtk.Button(label="Update now")
-        self._update_btn.get_style_context().add_class("suggested-action")
+        btns = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        btns.set_valign(Gtk.Align.CENTER)
+        self._update_btn = _button("Update Now", "cs-primary")
         self._update_btn.connect("clicked", lambda _b: self._do_update())
         self._update_btn.set_no_show_all(True)
-        self._update_btn.hide()
-        row.pack_start(self._update_btn, False, False, 0)
-        box.pack_start(row, False, False, 0)
+        btns.pack_start(self._update_btn, False, False, 0)
+        self._check_btn = _button("Check for Updates")
+        self._check_btn.connect("clicked", lambda _b: self._check(manual=True))
+        btns.pack_start(self._check_btn, False, False, 0)
+        hero.pack_end(btns, False, False, 0)
+        box.pack_start(hero, False, False, 0)
 
-        self._auto = Gtk.CheckButton(label="Automatically check for updates")
+        self._auto = Gtk.Switch()
         self._auto.set_active(bool(self.cfg.get("auto_update")))
-        self._auto.connect("toggled", self._on_auto_toggled)
-        box.pack_start(self._auto, False, False, 0)
+        self._auto.connect("notify::active", lambda sw, _p: self._on_auto_toggled(sw))
+        box.pack_start(_section("Updates", _card([
+            _row("Check for updates automatically", self._auto,
+                 "On launch and every hour; you're asked before anything installs.")])),
+            False, False, 0)
         return box
 
     def _on_auto_toggled(self, btn):
@@ -119,11 +213,10 @@ class SettingsWindow:
         if updates.is_newer(info["tag"]):
             self._latest = info
             self._status.set_markup(
-                f"<b>Update available:</b> {info['version']} "
-                f"(you have {config.VERSION})")
+                f"<b>Version {GLib.markup_escape_text(info['version'])} is available.</b>")
             self._update_btn.show()
         else:
-            self._status.set_text(f"You're up to date ({config.VERSION}).")
+            self._status.set_text("CosmicShot is up to date.")
             self._update_btn.hide()
         return False
 
@@ -161,39 +254,54 @@ class SettingsWindow:
 
     # -- shortcuts -------------------------------------------------------
     def _shortcuts_section(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        title = Gtk.Label(xalign=0)
-        title.set_markup("<b>Global keyboard shortcuts</b>")
-        box.pack_start(title, False, False, 0)
-        hint = Gtk.Label(xalign=0, label="Empty by default. Set a combination to "
-                         "register it system-wide via COSMIC.")
-        hint.get_style_context().add_class("dim-label")
-        hint.set_line_wrap(True)
-        box.pack_start(hint, False, False, 0)
-
-        grid = Gtk.Grid(column_spacing=10, row_spacing=8)
+        from . import capture
+        self._plasma = capture.is_plasma()
         self._accel_labels = {}
+        self._clear_btns = {}
         sc = dict(self.cfg.get("shortcuts") or {})
-        for i, (aid, label, _cmd) in enumerate(config.SHORTCUT_ACTIONS):
-            name = Gtk.Label(label=label, xalign=0, hexpand=True)
-            grid.attach(name, 0, i, 1, 1)
-            cur = Gtk.Label(label=sc.get(aid) or "—")
-            cur.get_style_context().add_class("dim-label")
-            cur.set_width_chars(16)
+        rows = []
+        for aid, label, _cmd in config.SHORTCUT_ACTIONS:
+            ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            cur = Gtk.Label()
+            cur.get_style_context().add_class("cs-keycap")
             self._accel_labels[aid] = cur
-            grid.attach(cur, 1, i, 1, 1)
-            setb = Gtk.Button(label="Set…")
+            ctl.pack_start(cur, False, False, 0)
+            setb = _button("Record", "cs-flat")
+            setb.set_tooltip_text("Press a new key combination")
             setb.connect("clicked", lambda _b, a=aid: self._set_shortcut(a))
-            grid.attach(setb, 2, i, 1, 1)
-            clrb = Gtk.Button(label="Clear")
+            ctl.pack_start(setb, False, False, 0)
+            clrb = Gtk.Button()
+            clrb.set_image(Gtk.Image.new_from_icon_name("edit-clear-symbolic",
+                                                        Gtk.IconSize.MENU))
+            clrb.get_style_context().add_class("cs-flat")
+            clrb.set_tooltip_text("Remove this shortcut")
             clrb.connect("clicked", lambda _b, a=aid: self._set_shortcut(a, clear=True))
-            grid.attach(clrb, 3, i, 1, 1)
-        box.pack_start(grid, False, False, 0)
+            self._clear_btns[aid] = clrb
+            ctl.pack_start(clrb, False, False, 0)
+            self._show_accel(aid, sc.get(aid))
+            rows.append(_row(label, ctl))
+        if self._plasma:
+            hint = ("On KDE Plasma, global shortcuts are set in System Settings › "
+                    "Keyboard › Shortcuts › Add New › Command — use the command "
+                    "shown in each row's tooltip. The combinations recorded here "
+                    "only apply on COSMIC.")
+            for row, (_aid, _label, cmd) in zip(rows, config.SHORTCUT_ACTIONS):
+                row.set_tooltip_text(cmd)
+        else:
+            hint = "Empty by default. Recorded combinations are registered system-wide via COSMIC."
+        self._sc_note = _footer(hint)
+        return _section("Keyboard Shortcuts", _card(rows), self._sc_note)
 
-        self._sc_note = Gtk.Label(xalign=0, label="")
-        self._sc_note.get_style_context().add_class("dim-label")
-        box.pack_start(self._sc_note, False, False, 0)
-        return box
+    def _show_accel(self, aid, accel):
+        lab = self._accel_labels[aid]
+        ctx = lab.get_style_context()
+        if accel:
+            lab.set_text(accel.replace("+", " + "))
+            ctx.remove_class("empty")
+        else:
+            lab.set_text("Not set")
+            ctx.add_class("empty")
+        self._clear_btns[aid].set_sensitive(bool(accel))
 
     def _set_shortcut(self, action_id, clear=False):
         accel = None if clear else _capture_accel(self.win)
@@ -206,7 +314,7 @@ class SettingsWindow:
             sc[action_id] = accel
         self.cfg["shortcuts"] = sc
         config.save(self.cfg)
-        self._accel_labels[action_id].set_text(accel or "—")
+        self._show_accel(action_id, accel)
         try:
             changed = shortcuts.apply(sc)
             self._sc_note.set_text(
@@ -218,30 +326,15 @@ class SettingsWindow:
     # -- upload ----------------------------------------------------------
     def _upload_section(self):
         """Cloud upload: on/off, host preset, or a custom endpoint (issue #4)."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        title = Gtk.Label(xalign=0)
-        title.set_markup("<b>Cloud upload</b>")
-        box.pack_start(title, False, False, 0)
-        hint = Gtk.Label(xalign=0, label="The editor's Upload button (Ctrl+U) sends "
-                         "the image to this host and copies the link. Uploads are "
-                         "public: anyone with the URL can view the image.")
-        hint.get_style_context().add_class("dim-label")
-        hint.set_line_wrap(True)
-        box.pack_start(hint, False, False, 0)
-
-        self._upload_enabled = Gtk.CheckButton(label="Show the Upload button")
+        self._upload_enabled = Gtk.Switch()
         self._upload_enabled.set_active(bool(self.cfg.get("upload_enabled", True)))
-        self._upload_enabled.connect("toggled", self._on_upload_toggled)
-        box.pack_start(self._upload_enabled, False, False, 0)
+        self._upload_enabled.connect("notify::active",
+                                     lambda sw, _p: self._on_upload_toggled(sw))
 
-        grid = Gtk.Grid(column_spacing=10, row_spacing=8)
-        grid.attach(Gtk.Label(label="Host", xalign=0), 0, 0, 1, 1)
         self._upload_host = Gtk.ComboBoxText()
         for label, _url, _field, _extra in config.UPLOAD_PRESETS:
             self._upload_host.append_text(label)
         self._upload_host.append_text("Custom…")
-        self._upload_host.set_hexpand(True)
-        grid.attach(self._upload_host, 1, 0, 1, 1)
 
         self._upload_url = Gtk.Entry(hexpand=True)
         self._upload_url.set_placeholder_text("https://example.com/upload")
@@ -253,21 +346,22 @@ class SettingsWindow:
         self._upload_extra = Gtk.Entry(hexpand=True)
         self._upload_extra.set_placeholder_text('{"reqtype": "fileupload"}')
         self._upload_extra.set_tooltip_text("Extra form fields, as a JSON object.")
-        self._custom_rows = []
-        for i, (label, entry) in enumerate([("Endpoint URL", self._upload_url),
-                                            ("File field", self._upload_field),
-                                            ("Extra fields", self._upload_extra)], 1):
-            lab = Gtk.Label(label=label, xalign=0)
-            grid.attach(lab, 0, i, 1, 1)
-            grid.attach(entry, 1, i, 1, 1)
-            self._custom_rows += [lab, entry]
-            entry.connect("changed", self._on_upload_custom_changed)
-        box.pack_start(grid, False, False, 0)
 
-        self._upload_note = Gtk.Label(xalign=0, label="")
-        self._upload_note.get_style_context().add_class("dim-label")
-        self._upload_note.set_line_wrap(True)
-        box.pack_start(self._upload_note, False, False, 0)
+        rows = [_row("Show the Upload button", self._upload_enabled),
+                _row("Host", self._upload_host)]
+        self._custom_rows = []
+        for label, entry in [("Endpoint URL", self._upload_url),
+                             ("File field", self._upload_field),
+                             ("Extra fields", self._upload_extra)]:
+            entry.set_width_chars(26)
+            r = _row(label, entry)
+            rows.append(r)
+            self._custom_rows.append(r)
+            entry.connect("changed", self._on_upload_custom_changed)
+        card = _card(rows)
+
+        self._upload_note = _footer("Uploads are public: anyone with the link can view "
+                                    "the image. Redact with Blur or Spotlight first.")
 
         # Select the preset matching the saved endpoint, else "Custom…".
         url = self.cfg.get("upload_service") or ""
@@ -279,17 +373,23 @@ class SettingsWindow:
         self._upload_extra.set_text(json.dumps(self.cfg.get("upload_extra") or {}))
         self._upload_host.set_active(idx)
         self._upload_host.connect("changed", self._on_upload_host_changed)
-        self._sync_upload_rows()
-        return box
+        return _section("Cloud Upload", card, self._upload_note)
 
     def _sync_upload_rows(self):
         enabled = self._upload_enabled.get_active()
         custom = self._upload_host.get_active() >= len(config.UPLOAD_PRESETS)
         self._upload_host.set_sensitive(enabled)
-        for w in self._custom_rows:
-            w.set_visible(custom)
-            w.set_no_show_all(not custom)
-            w.set_sensitive(enabled)
+        for row in self._custom_rows:
+            for w in (row, getattr(row, "_cs_sep", None)):
+                if w is None:
+                    continue
+                w.set_no_show_all(False)
+                if custom:
+                    w.show_all()
+                else:
+                    w.hide()
+                w.set_no_show_all(True)
+            row.set_sensitive(enabled)
 
     def _on_upload_toggled(self, btn):
         self.cfg["upload_enabled"] = btn.get_active()
@@ -334,8 +434,11 @@ class SettingsWindow:
     def run(self):
         self.win.connect("destroy", Gtk.main_quit)
         self.win.show_all()
-        self._update_btn.hide()
-        self._sync_upload_rows()
+        self._after_show()
         if self.cfg.get("auto_update"):
             self._check()
         Gtk.main()
+
+    def _after_show(self):
+        self._update_btn.hide()
+        self._sync_upload_rows()

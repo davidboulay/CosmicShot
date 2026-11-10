@@ -3,8 +3,9 @@
 Two uses:
   * SingleInstance("tray") — keep only one tray process (so relaunching the app
     from the dock is idempotent).
-  * SingleInstance("capture") — only one capture/editor session at a time, so
-    capture commands can't pile up while an editor is open.
+  * SingleInstance("capture") — only one capture at a time (two selection
+    overlays would grab each other). It covers the capture step only and is
+    released when the editor opens, so several editors can be open at once.
 """
 import fcntl
 import os

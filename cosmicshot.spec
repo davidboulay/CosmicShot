@@ -97,6 +97,12 @@ done
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
+* Tue Nov 10 2026 David Boulay <david.boulay@lojel.com> - 1.8.0-1
+- Editor sizes to the screen it opens on; compact toolbar
+- A minimized editor no longer blocks the next capture
+- Redesigned editor and Settings; new spotlight and hand icons
+- Easier sliders (full-knob hit area, finer low values)
+
 * Tue Nov 10 2026 David Boulay <david.boulay@lojel.com> - 1.7.0-1
 - KDE Plasma support: capture through Spectacle (native resolution, no portal
   prompt); editor never upscales on Plasma

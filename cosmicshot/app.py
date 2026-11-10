@@ -35,7 +35,19 @@ def _set_branding():
         pass
 
 
+# The capture lock of this process (see main). It guards the capture step only.
+_capture_lock = None
+
+
 def _run_editor(pil_image, cfg):
+    # The capture is done: release the lock before the editor opens, so the
+    # next screenshot can start even while this editor is open — or minimized
+    # and out of sight. (Raising a minimized window from another process isn't
+    # possible on Wayland: KWin and COSMIC refuse activation without a user-
+    # input token, so the old "bring it to the front" signal silently failed and
+    # left the user stuck behind "a capture is already in progress".)
+    if _capture_lock is not None:
+        _capture_lock.release()
     from .editor import Editor
     Editor(pil_image, cfg).run()
 
@@ -264,20 +276,15 @@ def main(argv=None):
         except Exception:
             pass
 
-    # One capture/editor session at a time: if an editor is already open,
-    # don't let another capture pile up on top of it.
+    # One capture at a time (a second overlay on top of the first would grab
+    # it). The lock covers the capture step only — selection overlay, scroll
+    # capture, recording — and is released as soon as an editor opens, so any
+    # number of editors can be open while a new screenshot is taken.
     from . import lock
-    capture_lock = lock.SingleInstance("capture")
+    global _capture_lock
+    capture_lock = _capture_lock = lock.SingleInstance("capture")
     if not capture_lock.acquire():
         export.notify("CosmicShot", "A capture is already in progress.")
-        # Bring the existing editor to the front instead of starting a new one.
-        pid = lock.read_active_pid()
-        if pid:
-            import signal
-            try:
-                os.kill(pid, signal.SIGUSR1)
-            except (OSError, ProcessLookupError):
-                pass
         return 0
 
     try:
