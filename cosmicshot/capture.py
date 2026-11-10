@@ -15,7 +15,9 @@ gives a 2560x1600 PNG but a ~1707x1067 logical desktop — so logical
 rectangles never go into the PNG directly: every crop goes through ImageMap.
 """
 import glob
+import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -42,7 +44,94 @@ class Monitor:
         return (self.x, self.y, self.x + self.width, self.y + self.height)
 
 
+def is_plasma():
+    """KDE Plasma backend: grab through Spectacle's CLI, as Spectacle itself
+    does (KWin ScreenShot2, native resolution per screen, no portal prompt).
+    The portal path upscales the whole desktop to the highest scale on
+    mixed-DPI setups, which made 100% screens look zoomed and soft."""
+    if os.environ.get("COSMICSHOT_BACKEND") == "portal":
+        return False
+    return ("KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+            and shutil.which("spectacle") is not None)
+
+
+def _kwin_active_output_pos():
+    """Logical (x, y) of KWin's active output (the one Spectacle -m grabs)."""
+    try:
+        name = subprocess.run(
+            ["busctl", "--user", "call", "org.kde.KWin", "/KWin",
+             "org.kde.KWin", "activeOutputName"],
+            capture_output=True, text=True, timeout=3).stdout.split('"')[1]
+        outs = json.loads(subprocess.run(
+            ["kscreen-doctor", "-j"], capture_output=True, text=True,
+            timeout=5).stdout)["outputs"]
+        o = next(o for o in outs if o["name"] == name)
+        global _plasma_scale
+        _plasma_scale = float(o.get("scale") or 1.0)
+        return o["pos"]["x"], o["pos"]["y"]
+    except Exception:
+        return None
+
+
+_plasma_scale = None
+
+
+def display_scale():
+    """Fractional scale of the screen being captured (Plasma), else None.
+    GTK3 only reports an integer scale (2 at 150%), too coarse for 1:1."""
+    if not is_plasma():
+        return None
+    _plasma_active_monitor()
+    return _plasma_scale
+
+
+_plasma_monitors = None
+
+
+def _plasma_active_monitor():
+    """On Plasma, work on the active screen only, in its own coordinates
+    (origin 0,0) so its native Spectacle grab maps exactly; cached so every
+    caller in this process agrees on the same screen."""
+    global _plasma_monitors
+    if _plasma_monitors is None:
+        mons = _all_monitors()
+        pos = _kwin_active_output_pos()
+        m = next((m for m in mons if pos and (m.x, m.y) == tuple(pos)), None)
+        m = m or next((m for m in mons if m.primary), mons[0])
+        _plasma_monitors = [Monitor(index=m.index, x=0, y=0, width=m.width,
+                                    height=m.height, scale=m.scale,
+                                    primary=True, model=m.model)]
+    return _plasma_monitors
+
+
+def _spectacle(flags, timeout=15):
+    """Run Spectacle in background mode; return the saved PNG path or None."""
+    tmp = tempfile.mkdtemp(prefix="cosmicshot-")
+    out = os.path.join(tmp, "shot.png")
+    subprocess.run(["spectacle", "-b", "-n", *flags, "-o", out],
+                   capture_output=True, text=True, timeout=timeout)
+    # Spectacle may hand the job to an already-running instance and return
+    # before the file lands; wait briefly for it.
+    for _ in range(50):
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            time.sleep(0.05)
+            return out
+        time.sleep(0.1)
+    return None
+
+
+def window_under_cursor():
+    """Plasma: the window under the pointer, at native resolution."""
+    return _spectacle(["-u"])
+
+
 def list_monitors():
+    if is_plasma():
+        return list(_plasma_active_monitor())
+    return _all_monitors()
+
+
+def _all_monitors():
     display = Gdk.Display.get_default()
     mons = []
     for i in range(display.get_n_monitors()):
@@ -115,7 +204,13 @@ def _newest_png(directory, since):
 
 
 def full(timeout=15):
-    """Silently capture the whole desktop. Returns path to a PNG in a temp dir."""
+    """Silently capture the whole desktop. Returns path to a PNG in a temp dir.
+    On Plasma: the active screen only, at its native resolution."""
+    if is_plasma():
+        path = _spectacle(["-m"], timeout)
+        if not path:
+            raise RuntimeError("spectacle produced no file")
+        return path
     tmp = tempfile.mkdtemp(prefix="cosmicshot-")
     start = time.time()
     proc = subprocess.run(
