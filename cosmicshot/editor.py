@@ -165,6 +165,9 @@ class Editor(Gtk.Window):
         self._canvas_bg = self._pal["canvas"]
 
         self._zoom = 1.0          # 1.0 = fit-to-window; >1 zooms in
+        from . import capture as _capture
+        _s = _capture.display_scale()
+        self._native_cap = (1.0 / _s) if _s else None  # Plasma only
         self._panx = 0.0          # extra pan offset (widget px) when zoomed
         self._pany = 0.0
         self.draft = None        # in-progress annotation (live preview)
@@ -747,7 +750,13 @@ class Editor(Gtk.Window):
     def _fit_scale(self):
         a = self.canvas.get_allocation()
         iw, ih = self.base_image.width, self.base_image.height
-        return min(a.width / iw, a.height / ih) if iw and ih else 1
+        fit = min(a.width / iw, a.height / ih) if iw and ih else 1
+        # Plasma: like Spectacle, never upscale — one image pixel per screen
+        # pixel at most (1/scale widget px at a fractional scale), shrink only
+        # when the capture is larger than the window.
+        if self._native_cap:
+            fit = min(fit, self._native_cap)
+        return fit
 
     def _layout(self):
         a = self.canvas.get_allocation()

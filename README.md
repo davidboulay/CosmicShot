@@ -45,6 +45,23 @@ Requires the COSMIC desktop (`cosmic-screenshot`); screen recording also needs
 PipeWire + GStreamer (see [Screen-recording dependencies](#screen-recording-dependencies)).
 No-repo options are in [Other ways to install](#other-ways-to-install).
 
+### KDE Plasma
+
+CosmicShot also runs on KDE Plasma (Wayland). There it captures through
+**Spectacle**'s command line (`spectacle -b -n`), the same way Spectacle itself
+grabs the screen: no screenshot-permission prompt, and each screen at its native
+resolution even with mixed scaling (the portal upscales the whole desktop to the
+highest scale). Differences from COSMIC:
+
+- **Region / screen** capture works on the active screen (the one Spectacle
+  would grab); a selection can't span two monitors.
+- **Window** capture takes the window under the cursor, like Spectacle's
+  *Window Under Cursor*, then opens the editor.
+- The editor shows captures at 1:1 and only shrinks ones larger than the window.
+
+Needs `spectacle` installed; set `COSMICSHOT_BACKEND=portal` to use the portal
+path instead. Use the per-user `./install.sh` on Plasma.
+
 ## Features
 
 - **Dimmed region selector** — drag to select with a live `W × H` readout,

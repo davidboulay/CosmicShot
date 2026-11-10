@@ -96,6 +96,13 @@ def mode_window(cfg):
     whole window. Uses COSMIC's toplevel-info protocol for window geometry; if
     that's unavailable (no build tools / non-COSMIC), fall back to COSMIC's
     native interactive picker."""
+    if capture.is_plasma():
+        # Same as Spectacle's "window under cursor": no portal dialog,
+        # native resolution.
+        shot_path = capture.window_under_cursor()
+        if shot_path:
+            _run_editor(Image.open(shot_path).convert("RGBA"), cfg)
+        return
     from . import windows
     wins = windows.list_windows()
     if not wins:

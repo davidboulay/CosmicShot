@@ -97,6 +97,10 @@ done
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
+* Tue Nov 10 2026 David Boulay <david.boulay@lojel.com> - 1.7.0-1
+- KDE Plasma support: capture through Spectacle (native resolution, no portal
+  prompt); editor never upscales on Plasma
+
 * Sat Oct 24 2026 David Boulay <david.boulay@lojel.com> - 1.6.0-1
 - Version now comes from build-rpm.sh (cosmicshot/config.py); fixed Fedora
   package names; launcher pins /usr/bin/python3
