@@ -41,6 +41,87 @@ def parse_accel(accel):
     return mods, key
 
 
+def format_accel(mods, key):
+    """(['Super','Shift'], 's') -> 'Super+Shift+S' (letters shown upper-case)."""
+    if len(key) == 1 and key.isalpha():
+        key = key.upper()
+    return "+".join(list(mods) + [key])
+
+
+def _keymap():
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk, Gtk  # importing Gtk 3 opens the display
+    Gtk.init_check(None)
+    display = Gdk.Display.get_default()
+    return Gdk, (Gdk.Keymap.get_for_display(display) if display else None)
+
+
+def base_keyname(keycode, state, group):
+    """Name of the key's unshifted symbol (e.g. '4' for the key that types '$'
+    with Shift), or None. COSMIC matches shortcut keys against these base
+    symbols, so a binding saved as Shift + "dollar" would never fire.
+    ``state`` should carry only modifiers that pick the symbol, like NumLock."""
+    try:
+        Gdk, km = _keymap()
+        if km is None:
+            return None
+        res = km.translate_keyboard_state(keycode, state, group)
+        return Gdk.keyval_name(res[1]) if res[0] else None
+    except Exception:
+        return None
+
+
+def _unshift(key):
+    """Older versions saved the shifted symbol ('dollar'). Map it back to its
+    base key on the current layout ('4'). Keys that are typed without Shift
+    on some key of this layout are left alone."""
+    if len(key) == 1 and key.isalpha():
+        return key
+    try:
+        Gdk, km = _keymap()
+        kv = Gdk.keyval_from_name(key)
+        if km is None or kv in (0, Gdk.KEY_VoidSymbol):
+            return key
+        ok, keys = km.get_entries_for_keyval(kv)
+        # Keycodes above 255 are evdev extras like KEY_DOLLAR that every
+        # layout maps but real keyboards lack; only physical keys count.
+        keys = [k for k in (keys if ok else []) if k.keycode <= 255]
+        if not keys or any(k.level == 0 for k in keys):
+            return key
+        k = keys[0]
+        return base_keyname(k.keycode, Gdk.ModifierType(0), k.group) or key
+    except Exception:
+        return key
+
+
+def migrate(cfg):
+    """Fix shortcuts recorded by <= 1.8.0 as Shift + shifted symbol (issue #7).
+    Rewrites the config and COSMIC's file once; returns True if anything changed."""
+    sc = dict(cfg.get("shortcuts") or {})
+    changed = False
+    for aid, accel in sc.items():
+        if not accel:
+            continue
+        mods, key = parse_accel(accel)
+        if not key or "Shift" not in mods:
+            continue
+        base = _unshift(key)
+        if base != key:
+            sc[aid] = format_accel(mods, base)
+            changed = True
+    if not changed:
+        return False
+    cfg["shortcuts"] = sc
+    config.save(cfg)
+    try:
+        apply(sc)
+    except Exception:
+        pass
+    return True
+
+
 def _entry(accel, command, label):
     mods, key = parse_accel(accel)
     if not key:

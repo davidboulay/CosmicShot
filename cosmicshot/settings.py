@@ -39,8 +39,11 @@ def _capture_accel(parent):
             mods.append("Alt")
         if s & Gdk.ModifierType.SHIFT_MASK:
             mods.append("Shift")
-        key = name.upper() if (len(name) == 1 and name.isalpha()) else name
-        result["accel"] = "+".join(mods + [key])
+            # Record the unshifted key ('4', not 'dollar'): COSMIC matches
+            # shortcuts on it (issue #7). Keep NumLock so keypad keys stay KP_n.
+            name = shortcuts.base_keyname(
+                ev.hardware_keycode, s & Gdk.ModifierType.MOD2_MASK, ev.group) or name
+        result["accel"] = shortcuts.format_accel(mods, name)
         dlg.response(Gtk.ResponseType.OK)
         return True
 
