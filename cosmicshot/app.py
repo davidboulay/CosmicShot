@@ -255,6 +255,13 @@ def main(argv=None):
             export.notify("CosmicShot", "No recording is in progress.")
         return 0
 
+    if args.mode in ("tray", "settings"):
+        from . import shortcuts
+        try:
+            shortcuts.migrate(cfg)  # Shift shortcuts saved by <= 1.8.0 (issue #7)
+        except Exception:
+            pass
+
     # 'tray' is the background app and must not take the capture lock.
     if args.mode == "tray":
         from . import tray
