@@ -97,6 +97,11 @@ done
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
+* Thu Nov 12 2026 David Boulay <david.boulay@lojel.com> - 1.9.0-1
+- KDE Plasma: shortcuts recorded in Settings are registered with KDE and work right away
+- COSMIC: shortcuts with Shift + a number or symbol now trigger (#7)
+- Settings shows shortcut errors and confirmations right under the shortcut
+
 * Tue Nov 10 2026 David Boulay <david.boulay@lojel.com> - 1.8.0-1
 - Editor sizes to the screen it opens on; compact toolbar
 - A minimized editor no longer blocks the next capture
