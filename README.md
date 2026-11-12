@@ -58,6 +58,9 @@ highest scale). Differences from COSMIC:
 - **Window** capture takes the window under the cursor, like Spectacle's
   *Window Under Cursor*, then opens the editor.
 - The editor shows captures at 1:1 and only shrinks ones larger than the window.
+- **Shortcuts** recorded in Settings are registered with KDE's global shortcuts
+  and work right away; they also appear in System Settings › Keyboard ›
+  Shortcuts, and shortcuts you already bound there show up in Settings.
 
 Needs `spectacle` installed; set `COSMICSHOT_BACKEND=portal` to use the portal
 path instead. Use the per-user `./install.sh` on Plasma.
@@ -228,8 +231,10 @@ Open **Settings…** from the tray (or `cosmicshot settings`):
   Tick **Automatically check for updates** to be notified when a new release
   lands.
 - **Global keyboard shortcuts** — assign a key combination per capture action.
-  These are written into COSMIC's custom-shortcuts config so they work
-  system-wide. Empty by default (a re-login guarantees COSMIC picks them up).
+  On COSMIC these are written into COSMIC's custom-shortcuts config so they work
+  system-wide (a re-login guarantees COSMIC picks them up); on KDE Plasma they
+  are registered with KDE's global shortcuts and work immediately. Empty by
+  default. A key that's already taken is reported right under the shortcut.
 
 ### Editor keys
 
@@ -328,6 +333,7 @@ cosmicshot/
   settings.py   settings window (version, updates, shortcuts)
   updates.py    GitHub release check + .deb install via pkexec
   shortcuts.py  writes CosmicShot shortcuts into COSMIC's config
+  kde.py        registers CosmicShot shortcuts with KDE Plasma (kglobalaccel)
   config.py     settings
 ```
 

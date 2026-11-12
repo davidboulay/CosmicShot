@@ -154,6 +154,8 @@ def css(dark):
     acc_hover = _mix(acc, 0.12)
     acc_press = _mix(acc, -0.12)
     ring = "#ffffff" if dark else "#1c1c1e"
+    err = "#ff453a" if dark else "#d70015"   # system red
+    ok = "#30d158" if dark else "#248a3d"    # system green
     return f"""
 /* ---------- shared ---------- */
 .cs-window, .cs-window > .cs-root {{ background-color: {p['window']}; }}
@@ -317,6 +319,10 @@ popover.cs-popover {{
   font-feature-settings: "tnum"; color: {p['label']};
 }}
 .cs-keycap.empty {{ background-color: transparent; color: {p['secondary']}; }}
+.cs-keycap.saved {{ box-shadow: inset 0 0 0 1.5px {ok}; }}
+.cs-row-status {{ font-size: 0.9em; font-weight: 600; margin-top: 2px; }}
+.cs-row-status.cs-err {{ color: {err}; }}
+.cs-row-status.cs-ok {{ color: {ok}; }}
 .cs-card entry, .cs-card combobox button {{
   border-radius: 8px; background-image: none; background-color: {p['field']};
   border: none; box-shadow: none; min-height: 28px;

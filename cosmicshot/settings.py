@@ -82,6 +82,7 @@ def _row(title, control=None, subtitle=None):
         sub.set_line_wrap(True)
         text.pack_start(sub, False, False, 0)
     row.pack_start(text, True, True, 0)
+    row._cs_text = text
     if control is not None:
         control.set_valign(Gtk.Align.CENTER)
         row.pack_end(control, False, False, 0)
@@ -261,7 +262,20 @@ class SettingsWindow:
         self._plasma = capture.is_plasma()
         self._accel_labels = {}
         self._clear_btns = {}
+        self._sc_status = {}
+        self._sc_timers = {}
         sc = dict(self.cfg.get("shortcuts") or {})
+        # Plasma: register with KDE's kglobalaccel and show what KDE has bound
+        # (including bindings made by hand). COSMIC never takes this path.
+        self._kde = False
+        kde_cur = {}
+        if self._plasma:
+            from . import kde
+            self._kde = kde.available()
+            if self._kde:
+                kde_cur = kde.current()
+                sc = {aid: (kde_cur[aid][0] if aid in kde_cur else None)
+                      for aid, _l, _c in config.SHORTCUT_ACTIONS}
         rows = []
         for aid, label, _cmd in config.SHORTCUT_ACTIONS:
             ctl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -282,8 +296,22 @@ class SettingsWindow:
             self._clear_btns[aid] = clrb
             ctl.pack_start(clrb, False, False, 0)
             self._show_accel(aid, sc.get(aid))
-            rows.append(_row(label, ctl))
-        if self._plasma:
+            if len(kde_cur.get(aid, [])) > 1:
+                cur.set_tooltip_text("Also bound in KDE: " + ", ".join(kde_cur[aid][1:])
+                                     + "\nRecording a new one replaces all of them.")
+            row = _row(label, ctl)
+            status = Gtk.Label(xalign=0)
+            status.get_style_context().add_class("cs-row-status")
+            status.set_line_wrap(True)
+            status.set_max_width_chars(46)
+            status.set_no_show_all(True)
+            row._cs_text.pack_start(status, False, False, 0)
+            self._sc_status[aid] = status
+            rows.append(row)
+        if self._kde:
+            hint = ("Recorded combinations are registered with KDE Plasma and work "
+                    "right away. They also appear in System Settings › Keyboard › Shortcuts.")
+        elif self._plasma:
             hint = ("On KDE Plasma, global shortcuts are set in System Settings › "
                     "Keyboard › Shortcuts › Add New › Command — use the command "
                     "shown in each row's tooltip. The combinations recorded here "
@@ -306,10 +334,46 @@ class SettingsWindow:
             ctx.add_class("empty")
         self._clear_btns[aid].set_sensitive(bool(accel))
 
+    def _row_status(self, aid, text, ok):
+        """Show a result right under the shortcut it concerns: red until the
+        next action on errors, green and fading after a few seconds on success."""
+        lab, cap = self._sc_status[aid], self._accel_labels[aid]
+        old = self._sc_timers.pop(aid, None)
+        if old:
+            GLib.source_remove(old)
+        ctx = lab.get_style_context()
+        ctx.remove_class("cs-ok"); ctx.remove_class("cs-err")
+        ctx.add_class("cs-ok" if ok else "cs-err")
+        lab.set_text(("✓ " if ok else "⚠ ") + text)
+        lab.show()
+        if ok:
+            cap.get_style_context().add_class("saved")
+
+        def _hide():
+            self._sc_timers.pop(aid, None)
+            lab.hide()
+            cap.get_style_context().remove_class("saved")
+            return False
+        if ok:
+            self._sc_timers[aid] = GLib.timeout_add_seconds(5, _hide)
+
     def _set_shortcut(self, action_id, clear=False):
         accel = None if clear else _capture_accel(self.win)
         if not clear and accel is None:
             return  # cancelled
+        if self._kde:
+            from . import kde
+            try:
+                ok, msg = kde.set_shortcut(action_id, accel)
+            except Exception as exc:
+                ok, msg = False, f"Couldn't register with KDE: {exc}"
+            if not ok:
+                prev = self._accel_labels[action_id].get_text()
+                if not self._accel_labels[action_id].get_style_context().has_class("empty"):
+                    msg += f" Kept {prev}."
+                self._row_status(action_id, msg, False)
+                return  # keep the previous shortcut and config
+            self._accel_labels[action_id].set_tooltip_text(None)
         sc = dict(self.cfg.get("shortcuts") or {})
         if clear:
             sc.pop(action_id, None)
@@ -320,11 +384,18 @@ class SettingsWindow:
         self._show_accel(action_id, accel)
         try:
             changed = shortcuts.apply(sc)
-            self._sc_note.set_text(
+            if self._kde:
+                self._row_status(action_id, msg, True)
+                return  # the KDE result is the one that matters here
+            self._row_status(
+                action_id,
                 "Saved to COSMIC. If it doesn't work right away, log out and back in."
-                if changed else "Saved.")
+                if changed else "Saved.", True)
         except Exception as exc:
-            self._sc_note.set_text(f"Couldn't write COSMIC shortcuts: {exc}")
+            if self._kde:
+                self._row_status(action_id, msg, True)
+                return
+            self._row_status(action_id, f"Couldn't write COSMIC shortcuts: {exc}", False)
 
     # -- upload ----------------------------------------------------------
     def _upload_section(self):
