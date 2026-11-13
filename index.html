@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CosmicShot APT repository</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{font:16px/1.6 system-ui,sans-serif;max-width:760px;margin:6vh auto;padding:0 20px;
+       background:#16171b;color:#e8e8ea}
+  h1{font-size:1.6rem} a{color:#4b9dff}
+  pre{background:#0f1013;border:1px solid #ffffff1a;border-radius:10px;padding:14px 16px;
+      overflow-x:auto;white-space:pre-wrap}
+  code{color:#d3d4d9}
+  .muted{color:#9a9ba0;font-size:.95rem}
+</style>
+<h1>CosmicShot — APT repository</h1>
+<p>A CleanShot-style screenshot, screen-recording &amp; annotation tool for
+   Pop!_OS / COSMIC. Add this repo to get it via <code>apt</code> with automatic upgrades.</p>
+<pre>sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://davidboulay.github.io/CosmicShot/cosmicshot-archive-keyring.gpg \
+  -o /etc/apt/keyrings/cosmicshot.gpg
+echo "deb [signed-by=/etc/apt/keyrings/cosmicshot.gpg] https://davidboulay.github.io/CosmicShot stable main" \
+  | sudo tee /etc/apt/sources.list.d/cosmicshot.list
+sudo apt update
+sudo apt install cosmicshot</pre>
+<p class="muted">Upgrades then arrive with <code>sudo apt upgrade</code> like any other package.
+   Source: <a href="https://github.com/davidboulay/CosmicShot">github.com/davidboulay/CosmicShot</a></p>
