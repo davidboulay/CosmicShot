@@ -97,6 +97,9 @@ done
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
+* Fri Nov 13 2026 David Boulay <david.boulay@lojel.com> - 1.9.1-1
+- Ellipses and step markers no longer draw a stray line to a text label
+
 * Thu Nov 12 2026 David Boulay <david.boulay@lojel.com> - 1.9.0-1
 - KDE Plasma: shortcuts recorded in Settings are registered with KDE and work right away
 - COSMIC: shortcuts with Shift + a number or symbol now trigger (#7)

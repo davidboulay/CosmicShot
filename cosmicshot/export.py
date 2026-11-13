@@ -37,6 +37,7 @@ def render(base_surface, blur_surface, annotations):
         if isinstance(ann, Spotlight):
             continue
         cr.save()
+        cr.new_path()  # cairo paths survive save/restore; don't join shapes
         ann.draw(cr, ctx)
         cr.restore()
     out.flush()
