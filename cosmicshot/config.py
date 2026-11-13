@@ -11,7 +11,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # COSMIC dock can match windows to the installed .desktop entry and icon.
 APP_ID = "cosmicshot"
 APP_NAME = "CosmicShot"
-VERSION = "1.9.1"                       # single source of truth; matches the git tag
+VERSION = "1.9.2"                       # single source of truth; matches the git tag
 GITHUB_REPO = "davidboulay/CosmicShot"  # for the update check
 ICON_FILE = str(Path(__file__).resolve().parent / "cosmicshot.png")  # bundled fallback
 # Red ⏹ stop button shown in the panel while a recording is in progress.
@@ -30,6 +30,9 @@ def icon_path():
 DEFAULTS = {
     # Where finished screenshots are saved when "Save" is pressed.
     "save_dir": str(Path.home() / "Pictures" / "Screenshots"),
+    # Save button: False = write straight into save_dir with filename_pattern;
+    # True = open a "Save as" dialog each time (starting in save_dir).
+    "ask_save_location": False,
     # Filename pattern; strftime tokens allowed.
     "filename_pattern": "CosmicShot_%Y-%m-%d_%H-%M-%S.png",
     # Default annotation appearance.

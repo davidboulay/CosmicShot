@@ -2307,9 +2307,44 @@ class Editor(Gtk.Window):
         self._closing = True
         self.destroy()
 
+    def _ask_save_path(self):
+        """Run a Save-as dialog; return the chosen path or None if cancelled."""
+        import os
+        from datetime import datetime
+        dlg = Gtk.FileChooserDialog(
+            title="Save screenshot", transient_for=self,
+            action=Gtk.FileChooserAction.SAVE)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                        "Save", Gtk.ResponseType.ACCEPT)
+        dlg.set_default_response(Gtk.ResponseType.ACCEPT)
+        dlg.set_do_overwrite_confirmation(True)
+        dlg.set_current_name(datetime.now().strftime(self.cfg["filename_pattern"]))
+        start = os.path.expanduser(self.cfg.get("save_dir") or "")
+        if start:
+            try:
+                os.makedirs(start, exist_ok=True)
+                dlg.set_current_folder(start)
+            except Exception:
+                pass
+        flt = Gtk.FileFilter()
+        flt.set_name("PNG image")
+        flt.add_pattern("*.png")
+        dlg.add_filter(flt)
+        resp = dlg.run()
+        chosen = dlg.get_filename() if resp == Gtk.ResponseType.ACCEPT else None
+        dlg.destroy()
+        if chosen and not chosen.lower().endswith(".png"):
+            chosen += ".png"
+        return chosen
+
     def do_save(self):
+        path = None
+        if self.cfg.get("ask_save_location"):
+            path = self._ask_save_path()
+            if not path:
+                return  # cancelled — keep the editor open
         surface = self._render()
-        path = export.save_to_disk(surface, self.cfg)
+        path = export.save_to_disk(surface, self.cfg, path)
         if self.cfg.get("copy_on_save"):
             export.copy_to_clipboard(surface)
         if self.cfg.get("notify_on_action"):
