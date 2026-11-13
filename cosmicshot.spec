@@ -97,6 +97,10 @@ done
 %{_datadir}/icons/hicolor/*/apps/cosmicshot.png
 
 %changelog
+* Fri Nov 13 2026 David Boulay <david.boulay@lojel.com> - 1.9.2-1
+- Settings > Saving: option to choose the file name and location on every Save
+- Settings > Saving: pick the screenshot folder without editing config.json
+
 * Fri Nov 13 2026 David Boulay <david.boulay@lojel.com> - 1.9.1-1
 - Ellipses and step markers no longer draw a stray line to a text label
 

@@ -128,7 +128,9 @@ path instead. Use the per-user `./install.sh` on Plasma.
 - **Cloud upload** — one click uploads and copies a shareable URL to your
   clipboard (default host: catbox.moe — free, no account, permanent). `Ctrl+U`.
 - **Copy to clipboard** or **Save PNG** — the toolbar buttons (or `Ctrl+S`).
-- **Settings** — version, one-click updates, global keyboard shortcuts, and the
+  Save goes straight into your screenshot folder, or, with **Ask where to save
+  each time** on (Settings → Saving), opens a Save-as dialog.
+- **Settings** — version, one-click updates, save folder / ask-on-save, global keyboard shortcuts, and the
   upload host (or no Upload button at all).
 - **Panel tray icon** with a capture/record menu, auto-started at login.
 
@@ -276,6 +278,7 @@ fails to parse is ignored (with a warning on stderr), which looks exactly like
 ```jsonc
 {
   "save_dir": "~/Pictures/Screenshots",
+  "ask_save_location": false,  // true: Save opens a Save-as dialog each time
   "filename_pattern": "CosmicShot_%Y-%m-%d_%H-%M-%S.png",
   "default_color": "#ff3b30",
   "default_width": 4,

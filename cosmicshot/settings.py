@@ -142,6 +142,7 @@ class SettingsWindow:
         root.get_style_context().add_class("cs-root")
         scroller.add(root)
         root.pack_start(self._version_section(), False, False, 0)
+        root.pack_start(self._saving_section(), False, False, 0)
         root.pack_start(self._shortcuts_section(), False, False, 0)
         root.pack_start(self._upload_section(), False, False, 0)
 
@@ -398,6 +399,57 @@ class SettingsWindow:
             self._row_status(action_id, f"Couldn't write COSMIC shortcuts: {exc}", False)
 
     # -- upload ----------------------------------------------------------
+    # -- saving ----------------------------------------------------------
+    def _saving_section(self):
+        """Save button: straight into a folder, or ask each time."""
+        import os
+        self._ask_save = Gtk.Switch()
+        self._ask_save.set_active(bool(self.cfg.get("ask_save_location", False)))
+        self._ask_save.connect("notify::active",
+                               lambda sw, _p: self._on_ask_save_toggled(sw))
+
+        self._save_dir = Gtk.FileChooserButton(
+            title="Choose screenshot folder",
+            action=Gtk.FileChooserAction.SELECT_FOLDER)
+        self._save_dir.set_width_chars(18)
+        d = os.path.expanduser(self.cfg.get("save_dir") or "")
+        if d:
+            os.makedirs(d, exist_ok=True)
+            self._save_dir.set_filename(d)
+        self._save_dir.connect("file-set", self._on_save_dir_set)
+
+        card = _card([
+            _row("Ask where to save each time", self._ask_save,
+                 "Off: Save writes straight into the folder below."),
+            _row("Screenshot folder", self._save_dir,
+                 "Also where the Save dialog opens."),
+        ])
+        self._save_note = _footer()
+        self._sync_save_note()
+        return _section("Saving", card, self._save_note)
+
+    def _sync_save_note(self, saved=False):
+        prefix = "Saved. " if saved else ""
+        if self._ask_save.get_active():
+            self._save_note.set_text(prefix + "Save opens a dialog to pick the name "
+                                     "and location.")
+        else:
+            self._save_note.set_text(prefix + "Save puts a time-stamped PNG in "
+                                     f"{self.cfg.get('save_dir')} without asking.")
+
+    def _on_ask_save_toggled(self, btn):
+        self.cfg["ask_save_location"] = btn.get_active()
+        config.save(self.cfg)
+        self._sync_save_note(saved=True)
+
+    def _on_save_dir_set(self, chooser):
+        path = chooser.get_filename()
+        if not path:
+            return
+        self.cfg["save_dir"] = path
+        config.save(self.cfg)
+        self._sync_save_note(saved=True)
+
     def _upload_section(self):
         """Cloud upload: on/off, host preset, or a custom endpoint (issue #4)."""
         self._upload_enabled = Gtk.Switch()
