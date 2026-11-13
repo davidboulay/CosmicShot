@@ -2073,10 +2073,10 @@ class Editor(Gtk.Window):
         for ann in self.annotations:
             if ann is self.editing_text or isinstance(ann, tools.Spotlight):
                 continue
-            cr.save(); ann.draw(cr, ctx); cr.restore()
+            cr.save(); cr.new_path(); ann.draw(cr, ctx); cr.restore()
         # live draft (non-spotlight; spotlight draft is in the combined layer)
         if self.draft is not None and not isinstance(self.draft, tools.Spotlight):
-            cr.save(); self.draft.draw(cr, ctx); cr.restore()
+            cr.save(); cr.new_path(); self.draft.draw(cr, ctx); cr.restore()
         # text being typed in place: subtle fill behind it, then the text + caret
         if self.editing_text is not None:
             bx, by, bw, bh = self.editing_text.bbox()  # already padded
@@ -2086,7 +2086,7 @@ class Editor(Gtk.Window):
             cr.fill()
             cr.restore()
             self._draw_text_selection(cr)
-            cr.save(); self.editing_text.draw(cr, ctx); cr.restore()
+            cr.save(); cr.new_path(); self.editing_text.draw(cr, ctx); cr.restore()
             self._draw_caret(cr)
         cr.restore()
         # crop overlay (drawn in widget space)
